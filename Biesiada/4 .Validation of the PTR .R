@@ -12,21 +12,6 @@ library(tidyverse)
 analysis_clean <- readRDS("ptr_analysis_dataset_200.rds") # broad sample
 analysis_model <- readRDS("ptr_model_dataset_200.rds") # strict sample
 
-# Helper: SkillCorner booleans arrive as strings ("True"/"False") or logicals -> transforming them to the logical values
-to_bool <- function(x) {
-  case_when(
-    x %in% c(TRUE,  "TRUE",  "True",  "true")  ~ TRUE,
-    x %in% c(FALSE, "FALSE", "False", "false") ~ FALSE,
-    TRUE ~ NA
-  )
-}
-
-# Converting to Boolean
-analysis_clean <- analysis_clean |>
-  mutate(
-    lead_to_shot = to_bool(lead_to_shot),
-    lead_to_goal = to_bool(lead_to_goal)
-  )
 
 # 1. What is the DISTRIBUTION -> know your outcome
 # What we expect: heavy spike at 0 (~50%), long right tail
@@ -38,6 +23,15 @@ ggplot(analysis_clean, aes(PTR)) +
   geom_histogram(bins = 60) +
   labs(title = "PTR distribution", x = "PTR", y = "Count") +
   theme_minimal()
+
+# Checking how many PTR = 0 and PTR > 0
+analysis_clean |>
+  mutate(PTR_group = case_when(
+    PTR == 0 ~ "PTR = 0",
+    PTR > 0  ~ "PTR > 0",
+    TRUE     ~ "Missing"
+  )) |>
+  count(PTR_group)
 
 # PTR is zero-heavy and strongly right-skewed. About 45.8% of possessions have PTR > 0,
 # meaning threat reduction happens often, but most values are small with a few large cases
@@ -182,51 +176,91 @@ analysis_model |>
 
 
 # 11. PREDICTIVE VALIDITY
+# CONDITIONAL VERSION:
+# Restrict to possessions where a dangerous realistic option existed.
+# This makes the comparison fairer because all rows had meaningful danger available,
+# but opportunity level is still not perfectly equal across bands
 analysis_clean |>
-  filter(engaged) |>
+  filter(engaged, max_xthreat_realistic > 0.02) |>
   mutate(PTR_band = case_when(
-    PTR == 0                    ~ "zero",
-    PTR <= median(PTR[PTR > 0]) ~ "low",
-    TRUE                        ~ "high"
+    PTR == 0                                  ~ "zero (took the danger)",
+    PTR <= median(PTR[PTR > 0], na.rm = TRUE) ~ "low",
+    TRUE                                      ~ "high (declined the danger)"
   )) |>
   group_by(PTR_band) |>
   summarise(n = n(),
-            pct_lead_to_shot = mean(lead_to_shot %in% TRUE) * 100,
-            .groups = "drop") |>
-  print()
-
-
-analysis_clean |>
-  filter(engaged) |>
-  mutate(
-    PTR_band = case_when(
-      PTR == 0 ~ "zero",
-      PTR <= median(PTR[PTR > 0], na.rm = TRUE) ~ "low",
-      TRUE ~ "high"
-    )
-  ) |>
-  group_by(PTR_band) |>
-  summarise(
-    n = n(),
-    mean_PTR = mean(PTR, na.rm = TRUE),
-    mean_chosen_xT = mean(player_targeted_xthreat, na.rm = TRUE),
-    mean_best_realistic_xT = mean(max_xthreat_realistic, na.rm = TRUE),
-    pct_lead_to_shot = mean(lead_to_shot %in% TRUE, na.rm = TRUE) * 100,
-    .groups = "drop"
+            mean_PTR = mean(PTR, na.rm = TRUE),
+            mean_best_realistic_xT = mean(max_xthreat_realistic, na.rm = TRUE),
+            mean_chosen_xT = mean(player_targeted_xthreat, na.rm = TRUE),
+            pct_lead_to_shot = mean(lead_to_shot %in% TRUE, na.rm = TRUE) * 100,
+            .groups = "drop"
   )
 
-# 12. FAILURE CONTRAST --> PTR should be LOW when the defender was beaten or not ( i mean because they are closing the )
-# The flag can be canceled in specific situations, such as interceptions, possession regain, or valid defensive positioning.
+# When a dangerous realistic option existed, what happened if the attacker took the danger versus declined the danger?
+# Full Story: dangerous option available -> chosen pass threat -> shot outcome
+
+# Interpretation:
+# When PTR was zero, the possession led to a shot 24.7% of the time
+# These are cases where the attacker took the dangerous option or selected an even more dangerous pass
+
+# When PTR was high, the possession led to a shot only 12.9% of the time even though the average best realistic option was very dangerous
+# This suggests that high PTR captures defensive suppression: the defense was associated with pushing the attacker away from a dangerous pass choice
+
+# Metric PTR, claims to measure something real: how much threat did the defense make the attacker give up
+# In fact, high PTR possessions had the most dangerous realistic options available, but the chosen passes were much less dangerous and led to fewer shots.
+# This supports the interpretation of PTR as a defensive threat-suppression metric
+  
+  
+# 12. FAILURE CONTRAST - > Even when the defender was beaten, did the attacker still choose a less dangerous pass?
+# beaten_by_possession = beaten on the ball — the carrier got past him
+# beaten_by_movement = beaten by the run — the receiver escaped him before the pass arrived
+
 analysis_clean |>
   filter(engaged) |>
   mutate(any_beaten = any_beaten_by_possession | any_beaten_by_movement) |>
-  group_by(any_beaten) |>
+  group_by(any_beaten_by_possession, any_beaten_by_movement) |>
   summarise(n = n(), mean_PTR = mean(PTR),
             pct_positive = mean(PTR > 0) * 100, .groups = "drop") |>
   print()
 
+# RESULT: deviation rate falls as defense fails more completely:
+#   47% (not beaten) -> 33% (by movement) -> 23% (by possession) -> 11% (both, n=9 too small)
+
+# INTERPRETATION:
+# This check should be judged mainly by pct_positive, not mean_PTR.
+# When defenders are beaten, they are less often associated with positive PTR,
+# meaning they less often force the attacker away from the best realistic option.
+
+# The mean PTR can still be higher for beaten cases because these events often
+# happen in high-threat situations, where the possible PTR ceiling is larger.
+
+# Future defender profiles should combine PTR with beaten rate:
+# high PTR + low beaten = strong suppression;
+# high PTR + high beaten = risky pressure.
 
 
+
+
+# EXTRA EVALUATION -------------------------------------------------------------
+# FUTURE DEFENDER EVALUATION -- three dimensions:
+# 1. Force rate : pct_positive_PTR    How often does the defender help force a less dangerous pass?
+# 2. Risk rate  : pct_beaten          How often does the defender get bypassed by possession or movement?
+# 3. Damage rate: pct_lead_to_shot    How often does the possession become dangerous after the engagement?
+#
+# Profiles:
+#   Best              : high force, low beaten, low shots
+#   Risky presser     : high force, high beaten, high shots
+#   Safe containment  : low force, low beaten, low shots
+#   Beaten-but-covered: high beaten rate, low shot rate
+#     This player may look bad because they get beaten, but the actual damage is low.
+#     This profile is hard to see with simple counting stats and may reveal
+#     undervalued defenders.
+#
+# NOTE:
+# These rates depend on role, team style, and field zone, so compare players
+# within position groups. A stronger future version would adjust for context using model residuals
+
+# -----------------------------------------------------------------------------------------------------------
 # TBD WORKING ON IT: Wilcoxon
 # FORMAL TEST: engaged vs unengaged PTR
 # Because PTR is zero-heavy and right-skewed, use a Wilcoxon rank-sum test instead of a normal t-test. With large n, p-values will be very small,
