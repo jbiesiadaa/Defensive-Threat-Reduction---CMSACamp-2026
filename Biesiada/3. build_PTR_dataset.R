@@ -247,7 +247,7 @@ obe_summary <- obe |>
   mutate(across(c(stop_possession_danger, reduce_possession_danger,
                   force_backward, pressing_chain, goal_side_start,
                   close_at_player_possession_start, possession_danger,
-                  simultaneous_defensive_engagement_same_target),   
+                  simultaneous_defensive_engagement_same_target, beaten_by_possession, beaten_by_movement),   
                 to_bool)) |> # Convert text booleans to real TRUE/FALSE
   group_by(match_id, associated_player_possession_event_id) |>
   summarise(
@@ -263,7 +263,9 @@ obe_summary <- obe |>
     in_pressing_chain        = any(pressing_chain, na.rm = TRUE),
     max_chain_length         = suppressWarnings( # suppressWarnings() to avoid annoying warnings when a possession has no valid values, and then we replace the weird result with NA
       max(pressing_chain_length, na.rm = TRUE)),
-    
+    #defensive FAILURE flags: never predictors
+    any_beaten_by_possession = any(beaten_by_possession, na.rm = TRUE),
+    any_beaten_by_movement   = any(beaten_by_movement,   na.rm = TRUE),
     # Defender distance
     min_engagement_distance  = suppressWarnings(
       min(interplayer_distance_min, na.rm = TRUE)), # This finds the closest distance between the defender and the ball carrier
@@ -335,6 +337,8 @@ analysis <- possessions |>
     # context controls (channel_start = the CARRIER's channel here) -> What was the situation when the pass happened?
     team_out_of_possession_phase_type, third_start, channel_start,
     game_state, duration,
+    # outcomes for predictive validation (10s window) --> NEVER predictors
+    lead_to_shot, lead_to_goal,
     # data quality -> Can we trust the tracking data for this possession? (Matching SkillCorner tracking data with the start and end of the possession)
     is_player_possession_start_matched, is_player_possession_end_matched
   ) |>
@@ -361,6 +365,8 @@ analysis <- possessions |>
                     "any_engagement_from_attacking_third",
                     "any_engagement_from_defensive_third",
                     "any_engagement_from_wide",
+                    "any_beaten_by_possession",
+                    "any_beaten_by_movement",
                     "stop_possession_danger", "reduce_possession_danger",
                     "force_backward")),
            ~ replace_na(.x, FALSE)),
@@ -489,6 +495,10 @@ analysis <- possessions |>
     )
   )
 
+# checking this outcomes
+analysis|>
+  count(lead_to_goal, lead_to_shot, any_beaten_by_possession, any_beaten_by_movement)
+
 # ------------------------------------------------------------------------------
 # 5. QUALITY FILTERS
 
@@ -518,4 +528,6 @@ cat("Full -> clean -> model:",
 # Saving for future work
 saveRDS(analysis_clean, "ptr_analysis_dataset_200.rds")
 saveRDS(analysis_model,  "ptr_model_dataset_200.rds")
+
+
 
