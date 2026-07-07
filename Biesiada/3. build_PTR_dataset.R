@@ -1,7 +1,8 @@
 # 3. build_PTR_dataset
 # Passing Threat Reduction (PTR): possession-level dataset construction
 # from SkillCorner Dynamic Events (player possessions, passing options,on-ball engagements)
-# Julia Biesiada Version -> Checking Swayam work and then adding mine extensions 
+# data wrangling and feature engineering steps
+# Julia Biesiada Version -> Checking Swayam work and then adding new extensions 
 
 library(tidyverse)
 library(jsonlite)
@@ -176,13 +177,13 @@ files <- list.files(
   full.names = TRUE
 )
 
-# keep only first 50 games
-files_100 <- files[1:100]
+# keep only first 200 games
+files_200 <- files[1:200]
 
-# read and combine 100 games
-dynamic_100 <- do.call(
+# read and combine 200 games
+dynamic_200 <- do.call(
   rbind,
-  lapply(files_100, function(file) {
+  lapply(files_200, function(file) {
     data <- read.csv(file)
     data$source_file <- file
     data$game_id <- gsub("match_|_events.csv", "", basename(file))
@@ -192,7 +193,7 @@ dynamic_100 <- do.call(
 
 
 # Writing it as events
-events <- dynamic_100
+events <- dynamic_200
 
 # Helper: SkillCorner booleans arrive as strings ("True"/"False") or logicals -> transforming them to the logical values
 to_bool <- function(x) {
@@ -306,7 +307,6 @@ obe_summary <- obe |>
   )
 
 
-
 # 4. BUILD THE ANALYSIS DATASET (one row = one possession ending in a pass)
 # I add the information about: 
 #   the pass the attacker chose
@@ -367,7 +367,7 @@ analysis <- possessions |>
     
     # Create coach friendly engagement type -> simple label for the type of defensive engagement
     # Two versions of this info exist:
-    #   - any_* FLAGS: can overlap  -> use in MODELS
+    #   - any_ FLAGS: can overlap  -> use in MODELS
     #   - this LABEL: one per row   -> use in TABLES, never as predictor
     # case_when = priority ladder, first match wins:
     # counter press > recovery press > pressing > pressure > other
@@ -490,3 +490,32 @@ analysis <- possessions |>
   )
 
 # ------------------------------------------------------------------------------
+# 5. QUALITY FILTERS
+
+# Clean dataset for validation and EDA
+n_start <- nrow(analysis)
+
+analysis_clean <- analysis |>
+  filter(!is_header %in% TRUE) |>        # remove headers: not normal pass/xThreat logic
+  filter(!hand_pass %in% TRUE) |>        # remove hand/throw-in type actions if present
+  filter(is_player_possession_end_matched %in% TRUE) |>  # pass moment reliably tracked
+  filter(!is.na(PTR))                    # PTR is computable
+
+
+cat("Possessions:", n_start, "->", nrow(analysis_clean),
+    "(removed:", n_start - nrow(analysis_clean), ")\n") # How many was removed by filtering
+
+# Stricter Idea for main models
+analysis_model <- analysis_clean |>
+  filter(is_player_possession_start_matched %in% TRUE) |> # start features reliable
+  filter(!short_possession) |>                            # remove one-touch/very short actions
+  filter(!disruption_possession %in% TRUE)                # remove messy/loose-ball actions
+
+# Representation of all changes
+cat("Full -> clean -> model:",
+    nrow(analysis), "->", nrow(analysis_clean), "->", nrow(analysis_model), "\n")
+
+# Saving for future work
+saveRDS(analysis_clean, "ptr_analysis_dataset_200.rds")
+saveRDS(analysis_model,  "ptr_model_dataset_200.rds")
+
