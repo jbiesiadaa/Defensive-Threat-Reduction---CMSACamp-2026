@@ -164,7 +164,6 @@ PTR_summary |>
 library(tidyverse)
 
 
-# 0. LOAD GAMES
 # ------------------------------------------------------------------------------
 # Working with multiple games
 
@@ -194,6 +193,19 @@ dynamic_200 <- do.call(
 
 # Writing it as events
 events <- dynamic_200
+
+# Helper: SkillCorner booleans arrive as strings ("True"/"False") or logicals -> transforming them to the logical values
+to_bool <- function(x) {
+  case_when(
+    x %in% c(TRUE,  "TRUE",  "True",  "true")  ~ TRUE,
+    x %in% c(FALSE, "FALSE", "False", "false") ~ FALSE,
+    TRUE ~ NA
+  )
+}
+
+
+# Writing it as events
+events <- dynamic_100
 
 # Helper: SkillCorner booleans arrive as strings ("True"/"False") or logicals -> transforming them to the logical values
 to_bool <- function(x) {
@@ -308,7 +320,6 @@ obe_summary <- obe |>
                                      NA_real_, mean_engagement_speed)
   )
 
-
 # 4. BUILD THE ANALYSIS DATASET (one row = one possession ending in a pass)
 # I add the information about: 
 #   the pass the attacker chose
@@ -345,6 +356,7 @@ analysis <- possessions |>
   mutate(across(c(organised_defense, inside_defensive_shape_start,
                   quick_pass, one_touch, is_header,
                   is_player_possession_start_matched,
+                  lead_to_shot, lead_to_goal,
                   is_player_possession_end_matched), to_bool)) |> # Convert text booleans to real TRUE/FALSE
   left_join(option_summary, # Join passing option summary
             by = c("match_id",
@@ -499,8 +511,8 @@ analysis <- possessions |>
 analysis|>
   count(lead_to_goal, lead_to_shot, any_beaten_by_possession, any_beaten_by_movement)
 
-# ------------------------------------------------------------------------------
-# 5. QUALITY FILTERS
+
+# 5. QUALITY FILTERS -----------------------------------------------------------
 
 # Clean dataset for validation and EDA
 n_start <- nrow(analysis)
@@ -530,4 +542,6 @@ saveRDS(analysis_clean, "ptr_analysis_dataset_200.rds")
 saveRDS(analysis_model,  "ptr_model_dataset_200.rds")
 
 
-
+# Checking
+class(analysis_clean$lead_to_shot)   # should say "logical"
+table(analysis_clean$lead_to_shot, useNA = "always")
