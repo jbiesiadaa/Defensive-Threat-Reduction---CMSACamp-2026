@@ -127,11 +127,25 @@ setDT(events)
 
 
 
-# --- 2. Join full player snapshot (all 22 players) to each event's frame_start 
+# 2. Join full player snapshot (all 22 players) to each event's frame_start 
 snapshot_start <- events |>
   select(event_id, match_id, frame_start, attacking_team_id,
          x_start, y_start) |>
   left_join(players, by = c("frame_start" = "frame"))
+
+
+
+# Standarizing tracking data to event data "attacking side is always from left to right"
+
+snapshot_start <- events |>
+  select(event_id, match_id, frame_start, attacking_team_id,
+         attacking_side, x_start, y_start) |>
+  left_join(players, by = c("frame_start" = "frame")) |>
+  mutate(
+    player_x = if_else(attacking_side == "right_to_left", -player_x, player_x),
+    player_y = if_else(attacking_side == "right_to_left", player_y, player_y)
+  )
+
 
 
 # tag each row as attacker or defender relative to that event
@@ -175,7 +189,7 @@ events <- events |>
 
 
 
-
+.................................................................................
 
 
 
