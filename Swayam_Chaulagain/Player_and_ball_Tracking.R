@@ -97,6 +97,21 @@ ball <- tracking |>
   )
 
 
+# Adding player_in_possession_id for the "player_possession" event
+
+events <- events |>
+  mutate(
+    player_in_possession_id = if_else(
+      event_type == "player_possession" & is.na(player_in_possession_id),
+      player_id,
+      player_in_possession_id
+    )
+  )
+
+
+
+
+
 # 4. Attach attacking team to events
 events <- events |>
   left_join(
@@ -131,8 +146,7 @@ compactness <- snapshot_start |>
   group_by(event_id) |>
   summarise(
     compactness_x_sd = sd(player_x),
-    depth_of_block = max(player_x) - min(player_x)
-  )
+    depth_of_block = max(player_x) - min(player_x))
 
 
 # nearest defender distance / count within radius
@@ -148,8 +162,11 @@ proximity <- snapshot_start |>
 
 events <- events |>
   left_join(compactness, by = "event_id") |>
-  left_join(gaps, by = "event_id") |>
   left_join(proximity, by = "event_id")
+
+
+
+
 
 
 
