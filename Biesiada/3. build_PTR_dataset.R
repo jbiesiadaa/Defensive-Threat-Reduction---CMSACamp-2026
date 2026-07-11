@@ -11,143 +11,8 @@ library(dplyr)
 library(sportyR)
 
 
-# Working with multiple games
-
-folder <- "mls_skillcorner/dynamic_events"
-
-# find all event csv files
-files <- list.files(
-  path = folder,
-  pattern = "_events\\.csv$",
-  full.names = TRUE
-)
-
-# keep only first 100 games
-files_100 <- files[1:100]
-
-# read and combine 100 games
-dynamic_100 <- do.call(
-  rbind,
-  lapply(files_100, function(file) {
-    data <- read.csv(file)
-    data$source_file <- file
-    data$game_id <- gsub("match_|_events.csv", "", basename(file))
-    return(data)
-  })
-)
 
 
-# -- Step 1: Passing options aggregated at frame_end----------------------------
-# We join at frame_end because player_targeted_xthreat is computed at the moment of the pass (frame_end), reducing timing mismatch
-
-options_per_frame <- dynamic_100 |>
-  filter(event_type == "passing_option", !is.na(xthreat)) |>
-  group_by(match_id, frame_end) |> # MORE OPTIONS, we added by match_id because we have a lot of games
-  summarise(
-    max_xthreat_available = max(xthreat, na.rm = TRUE),
-    .groups = "drop")
-
-# -- Step 2: Defensive outcomes from on_ball_engagement ------------------------
-
-outcomes_per_possession <- dynamic_100 |>
-  filter(event_type == "on_ball_engagement") |>
-  group_by(match_id, associated_player_possession_event_id) |>
-  summarise(
-    stop_possession_danger   = any(stop_possession_danger   == "True", na.rm = TRUE), # Did any defensive engagement stop the possession danger?
-    reduce_possession_danger = any(reduce_possession_danger == "True", na.rm = TRUE), # Did defense reduce the danger?
-    force_backward           = any(force_backward           == "True", na.rm = TRUE), # Did defense force the attacker backward?
-    n_engagements            = n(), # For each possession, summarize what the defense achieved.
-    .groups = "drop"
-  )
-
-# Step 3: Build analysis_data 
-analysis_data <- dynamic_500 |>
-  filter(event_type == "player_possession") |>
-  select(-stop_possession_danger, -reduce_possession_danger, -force_backward) |>
-  left_join(options_per_frame, by = c("match_id", "frame_end")) |>
-  left_join(outcomes_per_possession, by = c("match_id",
-                                            "event_id" =
-                                              "associated_player_possession_event_id")) |>
-  mutate(
-    PTR = ifelse(
-      !is.na(player_targeted_xthreat),
-      pmax(max_xthreat_available - player_targeted_xthreat, 0),
-      NA_real_),
-    defensive_outcome = case_when(
-      stop_possession_danger   == TRUE ~ "Interception / Turnover",
-      reduce_possession_danger == TRUE ~ "Suppression",
-      force_backward           == TRUE ~ "Forced Backward",
-      n_engagements > 0               ~ "Engaged, No Outcome",
-      TRUE                            ~ "No Engagement"
-    ))
-
-# Step 4: Remove empty and all-NA columns 
-analysis_data <- analysis_data |>
-  select(where(~ sum(!is.na(.)) > 0 & sum(. != "", na.rm = TRUE) > 0))
-
-# Analysis table by Defense outcome
-PTR_summary <- analysis_data |>
-  filter(!is.na(PTR), n_engagements > 0) |>
-  mutate(defensive_outcome = factor(defensive_outcome,
-                                    levels = c("Suppression", "Interception / Turnover",
-                                               "Forced Backward", "Engaged, No Outcome"))) |>
-  group_by(defensive_outcome) |>
-  summarise(
-    n            = n(),
-    mean_PTR     = mean(PTR, na.rm = TRUE),
-    pct_positive = mean(PTR > 0, na.rm = TRUE) * 100,
-    .groups = "drop"
-  )
-
-PTR_summary |>
-  gt() |>
-  cols_label(
-    defensive_outcome = "Defensive Outcome",
-    n                 = "N",
-    mean_PTR          = "Mean PTR",
-    pct_positive      = "% Positive PTR"
-  ) |>
-  tab_header(
-    title    = md("**Passing Threat Reduction (PTR) by Outcome**"),
-    subtitle = md(" PTR = (max available xThreat − xThreat of pass chosen)")
-  ) |>
-  tab_source_note(md(
-    "**PTR > 0:** attacker chose below their best available option — defense forced attacker a poor pass decision."
-  )) |>
-  fmt_number(columns = mean_PTR,     decimals = 5) |>
-  fmt_number(columns = pct_positive, decimals = 1) |>
-  fmt_integer(columns = n) |>
-  tab_style(
-    style     = cell_text(weight = "bold"),
-    locations = cells_body(columns = defensive_outcome)
-  ) |>
-  tab_style(
-    style = list(cell_fill(color = "#2d6a4f"),
-                 cell_text(color = "white", weight = "bold")),
-    locations = cells_body(
-      columns = pct_positive,
-      rows    = pct_positive == max(PTR_summary$pct_positive, na.rm = TRUE)
-    )
-  ) |>
-  tab_style(
-    style = list(cell_fill(color = "#2d6a4f"),
-                 cell_text(color = "white", weight = "bold")),
-    locations = cells_body(
-      columns = mean_PTR,
-      rows    = mean_PTR == max(PTR_summary$mean_PTR, na.rm = TRUE)
-    )
-  ) |>
-  opt_row_striping() |>
-  tab_options(
-    table.font.size               = 13,
-    heading.title.font.size       = 16,
-    column_labels.font.weight     = "bold",
-    table.border.top.color        = "#2d6a4f",
-    table.border.top.width        = px(3),
-    row.striping.background_color = "#f5f5f5"
-  )
-
-# MAIN TAKEWAY: 
 # Suppression creates the largest average passing threat reduction, while forced backward actions most often make attackers choose below their best available option.
 
 
@@ -161,8 +26,9 @@ PTR_summary |>
 #        Realistic = xpass_completion > 0.68 (SkillCorner's own line-break
 
 
-library(tidyverse)
 
+# Working with single game -> case study for the EDA 
+events    <- read.csv("mls_skillcorner/dynamic_events/match_742721_events.csv")
 
 # ------------------------------------------------------------------------------
 # Working with multiple games
@@ -203,18 +69,7 @@ to_bool <- function(x) {
   )
 }
 
-
-# Writing it as events
-events <- dynamic_100
-
-# Helper: SkillCorner booleans arrive as strings ("True"/"False") or logicals -> transforming them to the logical values
-to_bool <- function(x) {
-  case_when(
-    x %in% c(TRUE,  "TRUE",  "True",  "true")  ~ TRUE,
-    x %in% c(FALSE, "FALSE", "False", "false") ~ FALSE,
-    TRUE ~ NA
-  )
-}
+events <- dynamic_200
 
 
 # 1. SPLIT INTO EVENT TABLES
@@ -230,28 +85,34 @@ obe         <- events |> filter(event_type_id == 9)
 #    Matching by time instead would just guess based on when things happened, and can link the wrong events together.
 # ------------------------------------------------------------------------------
 option_summary <- options |>
-  filter(!is.na(xthreat)) |> # Keep only options with xThreat
-  mutate(
-    realistic = !is.na(xpass_completion) & xpass_completion > 0.68 # Creating a new column realistic (xpass_completion > 0.68)
-  ) |>
+  filter(!is.na(xthreat)) |>
+  mutate(realistic = !is.na(xpass_completion) & xpass_completion > 0.68) |>
   group_by(match_id, associated_player_possession_event_id) |>
   summarise(
-    n_options_counted      = n(), # This counts how many passing options were available for that possession
-    max_xthreat_all        = max(xthreat, na.rm = TRUE), # This finds the highest xThreat value among all available passing options
-    max_xthreat_realistic  = ifelse(any(realistic), # This finds the highest xThreat only among realistic options
-                                    max(xthreat[realistic], na.rm = TRUE),
-                                    NA_real_),
-    
-    # who was the most dangerous realistic option? (Question: did the attacker abandon the dangerous lane?)
-    # This finds the event_id of the most dangerous realistic passing option
-    best_option_event_id = ifelse(
-      any(realistic),
-      event_id[which.max(ifelse(realistic, xthreat, -Inf))][1],
-      NA_character_),
-    n_realistic = sum(realistic),
-    .groups = "drop"
+    n_options_counted     = n(),
+    max_xthreat_all       = max(xthreat, na.rm = TRUE),
+    max_xthreat_realistic = ifelse(any(realistic),
+                                   max(xthreat[realistic], na.rm = TRUE),
+                                   NA_real_),
+    # Identify the best realistic option
+    best_option_event_id  = ifelse(any(realistic),
+                                   event_id[which.max(ifelse(realistic, xthreat, -Inf))][1],
+                                   NA_character_),
+    best_option_player_id = ifelse(any(realistic),
+                                   as.integer(player_id[which.max(ifelse(realistic, xthreat, -Inf))][1]),
+                                   NA_integer_),
+    # position at the pass moment (the fixused for plots + controls)
+    best_option_x = ifelse(any(realistic),
+                           x_end[which.max(ifelse(realistic, xthreat, -Inf))][1], NA_real_),
+    best_option_y = ifelse(any(realistic),
+                           y_end[which.max(ifelse(realistic, xthreat, -Inf))][1], NA_real_),
+    # position when his option-event began (kept ONLY to derive movement)
+    best_option_x_start = ifelse(any(realistic),
+                                 x_start[which.max(ifelse(realistic, xthreat, -Inf))][1], NA_real_),
+    best_option_y_start = ifelse(any(realistic),
+                                 y_start[which.max(ifelse(realistic, xthreat, -Inf))][1], NA_real_),
+    .groups = "drop"                                
   )
-
 
 # 3. DEFENSIVE (OBE) FEATURES PER POSSESSION
 # ------------------------------------------------------------------------------
@@ -329,42 +190,83 @@ obe_summary <- obe |>
 analysis <- possessions |>
   filter(!is.na(targeted_passing_option_event_id)) |>   # ended with a pass
   select(
-    match_id, game_id, event_id, player_id, player_name, team_id,
+    match_id,event_id, player_id, player_name, team_id, # game_id
     targeted_passing_option_event_id,
+    
+    # tracking-join keys + direction flag
+    frame_start, frame_end, attacking_side,
+    
+    # identity of the player actually targeted and x and y
+    player_targeted_id,player_targeted_x_pass,player_targeted_y_pass,
+    
+    # carrier positions, event coords (distance controls below)
+    x_start, y_start, x_end, y_end,
+    
     # chosen pass -> What pass did the attacker choose, and how dangerous or difficult was it?
     player_targeted_xthreat, player_targeted_xpass_completion,
     pass_direction, pass_distance, pass_range, pass_outcome,
     quick_pass, one_touch, is_header, hand_pass, 
+    
     # pressure on the ball carrier (separation_gain = end - start) -> Did the attacker gain space or lose space during the possession?
     separation_start, separation_end, separation_gain,
+    
     # structure -> What defensive shape was the attacker facing?
     organised_defense, defensive_structure, n_defensive_lines,
     inside_defensive_shape_start,
     last_defensive_line_height_start, delta_to_last_defensive_line_start,
+    
     # option availability (SkillCorner aggregates) -> How good was the attacker’s passing options?
     n_passing_options, n_passing_options_dangerous_not_difficult,
     n_passing_options_dangerous_difficult, n_passing_options_line_break,
     n_passing_options_ahead,
+    
     # context controls (channel_start = the CARRIER's channel here) -> What was the situation when the pass happened?
     team_out_of_possession_phase_type, third_start, channel_start,
     game_state, duration,
+    
     # outcomes for predictive validation (10s window) --> NEVER predictors
     lead_to_shot, lead_to_goal,
+    
     # data quality -> Can we trust the tracking data for this possession? (Matching SkillCorner tracking data with the start and end of the possession)
     is_player_possession_start_matched, is_player_possession_end_matched
   ) |>
   mutate(across(c(organised_defense, inside_defensive_shape_start,
                   quick_pass, one_touch, is_header,
-                  is_player_possession_start_matched,
                   lead_to_shot, lead_to_goal,
+                  is_player_possession_start_matched,
                   is_player_possession_end_matched), to_bool)) |> # Convert text booleans to real TRUE/FALSE
-  left_join(option_summary, # Join passing option summary
+  # integer casts AT THE SOURCE (compared to tracking ids/frames later)
+  mutate(
+    player_targeted_id = as.integer(player_targeted_id),
+    frame_start        = as.integer(frame_start),
+    frame_end          = as.integer(frame_end)
+  ) |>
+  left_join(option_summary,
             by = c("match_id",
                    "event_id" = "associated_player_possession_event_id")) |>
-  left_join(obe_summary, # Join defensive engagement summary
+  left_join(obe_summary,
             by = c("match_id",
                    "event_id" = "associated_player_possession_event_id")) |>
   mutate(
+    # distance controls -- MUST live after the joins (need best_option_x/y).
+    # Event-coordinate math is safe: both endpoints share the mirrored
+    # system; opponent goal fixed at (52.5, 0).
+    dist_carrier_to_goal   = sqrt((52.5 - x_end)^2 + (0 - y_end)^2),
+    dist_best_option_to_goal    = sqrt((52.5 - best_option_x)^2 +
+                                    (0 - best_option_y)^2),
+    dist_targeted_player_to_goal = sqrt((52.5 - player_targeted_x_pass)^2 +
+        (0 - player_targeted_y_pass)^2),
+    
+    dist_carrier_to_best_option = sqrt((x_end - best_option_x)^2 +
+                                    (y_end - best_option_y)^2),
+    dist_carrier_to_targeted_player = sqrt( (x_end - player_targeted_x_pass)^2 +
+        (y_end - player_targeted_y_pass)^2),
+    dist_targeted_to_best_option = sqrt((player_targeted_x_pass - best_option_x)^2 +(player_targeted_y_pass - best_option_y)^2),
+    # was the best option a RUNNER or a static outlet?
+    best_best_option_run_dist    = sqrt((best_option_x - best_option_x_start)^2 +
+                                     (best_option_y - best_option_y_start)^2),
+    best_best_option_run_forward = best_option_x - best_option_x_start,  # + = ran toward goal
+    
     n_engagements = replace_na(n_engagements, 0L),
     engaged       = n_engagements > 0, # Did the defense engage the ball carrier or not?
     
@@ -507,6 +409,21 @@ analysis <- possessions |>
     )
   )
 
+
+# Tracking of changes 
+# 07/10/2026
+#---- Option_summary
+# Added the identity and coordinates of the best realistic passing option start and end
+# The code keeps the option event ID, player ID, position at the passing moment,
+# and position at the beginning of the option event to measure player movement.
+
+# ---Analysis
+# Added frame information, attacking direction, targeted player identity,
+# targeted receiver coordinates end frame, and ball carrier coordinates start and end
+# Calculation: distance_to_goal by carrier, best option and targeted
+# distance between the carrier and best option, carrier and player targeted, player targeted and best option
+# movement of the best option player before the pass
+
 # checking this outcomes
 analysis|>
   count(lead_to_goal, lead_to_shot, any_beaten_by_possession, any_beaten_by_movement)
@@ -536,6 +453,21 @@ analysis_model <- analysis_clean |>
 # Representation of all changes
 cat("Full -> clean -> model:",
     nrow(analysis), "->", nrow(analysis_clean), "->", nrow(analysis_model), "\n")
+
+
+# COMPLETENESS CHECK -- must print character(0) or do not proceed
+# ------------------------------------------------------------------------------
+required <- c("frame_start","frame_end","attacking_side","player_targeted_id",
+              "x_start","y_start","x_end","y_end",
+              "best_option_player_id","best_option_x","best_option_y",
+              "dist_carrier_to_goal","dist_option_to_goal",
+              "dist_carrier_to_option")
+print(setdiff(required, names(analysis_model)))
+
+cat("best_option_player_id coverage:",
+    round(mean(!is.na(analysis_model$best_option_player_id)) * 100, 1), "%\n")
+
+
 
 # Saving for future work
 saveRDS(analysis_clean, "ptr_analysis_dataset_200.rds")
