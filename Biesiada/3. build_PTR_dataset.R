@@ -484,7 +484,8 @@ print(setdiff(required, names(analysis_model)))
 cat("best_option_player_id coverage:",
     round(mean(!is.na(analysis_model$best_option_player_id)) * 100, 1), "%\n")
 
-
+events|>
+  select(event_id,player_targeted_distance_to_goal_start )
 
 # Saving for future work
 saveRDS(analysis_clean, "ptr_analysis_dataset_200.rds")
