@@ -266,6 +266,18 @@ analysis <- possessions |>
     best_best_option_run_dist    = sqrt((best_option_x - best_option_x_start)^2 +
                                      (best_option_y - best_option_y_start)^2),
     best_best_option_run_forward = best_option_x - best_option_x_start,  # + = ran toward goal
+    # Lateral movement of the best option receiver
+    best_option_run_lateral =
+      best_option_y - best_option_y_start,
+    # Absolute lateral movement, regardless of direction
+    best_option_run_lateral_abs =
+      abs(best_option_y - best_option_y_start),
+    # Direction of the receiver's run in degrees
+    best_option_run_angle =
+      atan2(
+        best_option_y - best_option_y_start,
+        best_option_x - best_option_x_start
+      ) * 180 / pi,
     
     n_engagements = replace_na(n_engagements, 0L),
     engaged       = n_engagements > 0, # Did the defense engage the ball carrier or not?
@@ -409,7 +421,11 @@ analysis <- possessions |>
     )
   )
 
-
+# Checking for one game
+analysis|>
+  filter(event_id == "8_172")|>
+  select(best_option_run_angle,best_option_run_lateral,best_best_option_run_forward )
+  
 # Tracking of changes 
 # 07/10/2026
 #---- Option_summary
@@ -423,6 +439,7 @@ analysis <- possessions |>
 # Calculation: distance_to_goal by carrier, best option and targeted
 # distance between the carrier and best option, carrier and player targeted, player targeted and best option
 # movement of the best option player before the pass
+# angle of the best option, lateral run
 
 # checking this outcomes
 analysis|>
