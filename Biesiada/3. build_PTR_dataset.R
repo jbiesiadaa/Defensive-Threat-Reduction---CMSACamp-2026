@@ -102,9 +102,9 @@ option_summary <- options |>
                                    as.integer(player_id[which.max(ifelse(realistic, xthreat, -Inf))][1]),
                                    NA_integer_),
     # position at the pass moment (the fixused for plots + controls)
-    best_option_x = ifelse(any(realistic),
+    best_option_x_end = ifelse(any(realistic),
                            x_end[which.max(ifelse(realistic, xthreat, -Inf))][1], NA_real_),
-    best_option_y = ifelse(any(realistic),
+    best_option_y_end = ifelse(any(realistic),
                            y_end[which.max(ifelse(realistic, xthreat, -Inf))][1], NA_real_),
     # position when his option-event began (kept ONLY to derive movement)
     best_option_x_start = ifelse(any(realistic),
@@ -248,36 +248,52 @@ analysis <- possessions |>
             by = c("match_id",
                    "event_id" = "associated_player_possession_event_id")) |>
   mutate(
-    # distance controls -- MUST live after the joins (need best_option_x/y).
-    # Event-coordinate math is safe: both endpoints share the mirrored
-    # system; opponent goal fixed at (52.5, 0).
-    dist_carrier_to_goal   = sqrt((52.5 - x_end)^2 + (0 - y_end)^2),
-    dist_best_option_to_goal    = sqrt((52.5 - best_option_x)^2 +
-                                    (0 - best_option_y)^2),
-    dist_targeted_player_to_goal = sqrt((52.5 - player_targeted_x_pass)^2 +
-        (0 - player_targeted_y_pass)^2),
+    # DISTANCES TO GOAL 
+    # carrier
+    dist_carrier_to_goal_start = sqrt((52.5 - x_start)^2 + (0 - y_start)^2),
+    dist_carrier_to_goal_end   = sqrt((52.5 - x_end)^2   + (0 - y_end)^2),
+    # best option
+    dist_option_to_goal_start  = sqrt((52.5 - best_option_x_start)^2 +
+                                        (0 - best_option_y_start)^2),
+    dist_option_to_goal_end    = sqrt((52.5 - best_option_x_end)^2 +
+                                        (0 - best_option_y_end)^2),
+    # targeted (pass moment only)
+    dist_target_to_goal        = sqrt((52.5 - player_targeted_x_pass)^2 +
+                                        (0 - player_targeted_y_pass)^2),
     
-    dist_carrier_to_best_option = sqrt((x_end - best_option_x)^2 +
-                                    (y_end - best_option_y)^2),
-    dist_carrier_to_targeted_player = sqrt( (x_end - player_targeted_x_pass)^2 +
-        (y_end - player_targeted_y_pass)^2),
-    dist_targeted_to_best_option = sqrt((player_targeted_x_pass - best_option_x)^2 +(player_targeted_y_pass - best_option_y)^2),
-    # was the best option a RUNNER or a static outlet?
-    best_best_option_run_dist    = sqrt((best_option_x - best_option_x_start)^2 +
-                                     (best_option_y - best_option_y_start)^2),
-    best_best_option_run_forward = best_option_x - best_option_x_start,  # + = ran toward goal
-    # Lateral movement of the best option receiver
-    best_option_run_lateral =
-      best_option_y - best_option_y_start,
-    # Absolute lateral movement, regardless of direction
-    best_option_run_lateral_abs =
-      abs(best_option_y - best_option_y_start),
-    # Direction of the receiver's run in degrees
-    best_option_run_angle =
-      atan2(
-        best_option_y - best_option_y_start,
-        best_option_x - best_option_x_start
-      ) * 180 / pi,
+    # DISTANCES BETWEEN Carrier, Best Option and Targeted Option 
+    # carrier <-> best option, at both moments (did the option drift away
+    # from or toward the carrier during the possession?)
+    dist_carrier_to_option_start = sqrt((x_start - best_option_x_start)^2 +
+                                          (y_start - best_option_y_start)^2),
+    dist_carrier_to_option_end   = sqrt((x_end - best_option_x_end)^2 +
+                                          (y_end - best_option_y_end)^2),
+    # carrier <-> target (pass moment)
+    dist_carrier_to_target       = sqrt((x_end - player_targeted_x_pass)^2 +
+                                          (y_end - player_targeted_y_pass)^2),
+    # target <-> best option at the pass (how far apart were the chosen and
+    # declined destinations? 0 when he took the best option)
+    dist_target_to_option        = sqrt((player_targeted_x_pass - best_option_x_end)^2 +
+                                          (player_targeted_y_pass - best_option_y_end)^2),
+    
+    # MOVEMENT: BEST OPTION'S RUN (event window)
+    best_option_run_dist    = sqrt((best_option_x_end - best_option_x_start)^2 +
+                                     (best_option_y_end - best_option_y_start)^2),
+    best_option_run_forward = best_option_x_end - best_option_x_start,  # + = to goal
+    best_option_run_lateral = best_option_y_end - best_option_y_start,  # signed
+    best_option_run_angle   = ifelse(best_option_run_dist > 1,
+                                     atan2(best_option_y_end - best_option_y_start,
+                                           best_option_x_end - best_option_x_start) * 180 / pi,
+                                     NA_real_),
+    
+    # MOVEMENT: CARRIER (possession window; = the carry) 
+    carrier_move_dist    = sqrt((x_end - x_start)^2 + (y_end - y_start)^2),
+    carrier_move_forward = x_end - x_start,                             # + = to goal
+    carrier_move_lateral = y_end - y_start,                             # signed
+    carrier_move_angle   = ifelse(carrier_move_dist > 1,
+                                  atan2(y_end - y_start,
+                                        x_end - x_start) * 180 / pi,
+                                  NA_real_),
     
     n_engagements = replace_na(n_engagements, 0L),
     engaged       = n_engagements > 0, # Did the defense engage the ball carrier or not?
@@ -425,6 +441,10 @@ analysis <- possessions |>
 analysis|>
   filter(event_id == "8_172")|>
   select(best_option_run_angle,best_option_run_lateral,best_best_option_run_forward )
+  
+events|>
+  filter(event_id == "8_172")|>
+  select(player_targeted_angle_to_goal_start, player_targeted_angle_to_goal_end)
   
 # Tracking of changes 
 # 07/10/2026

@@ -16,8 +16,6 @@ library(purrr)
 library(stringr)
 library(tidyverse)
 
-
-
 # Choosing the folder
 folder <- "mls_skillcorner/tracking"
 
@@ -77,7 +75,7 @@ colnames(tracking_10)
 colnames(tracking_10$player_data)
 
 
-# ==============================================================================
+
 # JOIN + STANDARDIZE: events <-> tracking, one game
 # Two snapshots: frame_start (reception context) + frame_end (decision moment)
 # ==============================================================================
@@ -123,7 +121,8 @@ events <- events |>
     player_in_possession_id = if_else(
       event_type == "player_possession" & is.na(player_in_possession_id),
       player_id, player_in_possession_id),
-    player_in_possession_id = as.integer(player_in_possession_id)  # FIX
+    player_in_possession_id = as.integer(player_in_possession_id),
+    player_targeted_id      = as.integer(player_targeted_id) 
   ) |>
   left_join(players_lookup |>
               select(player_id, attacking_team_id = team_id),
@@ -136,6 +135,7 @@ make_snapshot <- function(events, players, frame_col) {
   events |>
     select(event_id, match_id, event_type, attacking_team_id, attacking_side,
            player_in_possession_id,                                # FIX: carrier in
+           player_targeted_id,                                    # NEW          
            frame_used = all_of(frame_col),
            x_start, y_start, x_end, y_end) |>
     left_join(players, by = c("frame_used" = "frame"),
@@ -144,14 +144,26 @@ make_snapshot <- function(events, players, frame_col) {
       player_x = if_else(attacking_side == "right_to_left", -player_x, player_x),
       player_y = if_else(attacking_side == "right_to_left", -player_y, player_y),  #
       side = if_else(team_id == attacking_team_id, "attack", "defense")
-    )
+    )|>
+  distinct(event_id, player_id, .keep_all = TRUE)                # dup guard
 }
 
 snapshot_start <- make_snapshot(events, players, "frame_start")  # reception
 snapshot_end   <- make_snapshot(events, players, "frame_end")    # decision (primary)
-# FIX: dead duplicate block removed -- one builder, two named snapshots
 
-# 7. VERIFICATION -- V1 on both snapshots (flip certified vs SkillCorner's xy)
+# 7. NEW: TARGETED PLAYER'S POSITION AT frame_start (from tracking, flipped)
+target_pos_start <- snapshot_start |>
+  filter(event_type == "player_possession",
+         player_id == player_targeted_id,
+         !is.na(player_x)) |>
+  transmute(event_id = as.character(event_id),
+            player_targeted_x_start = player_x,
+            player_targeted_y_start = player_y)
+
+
+# 8. VERIFICATION -- V1 on both snapshots (flip certified vs SkillCorner's xy)
+# coverage: how many possessions got a start position?
+nrow(target_pos_start)   # expect ~85-95% of pass possessions (~800+ of ~898)
 
 # ratio sanity
 cat("rows per event -- start:", round(nrow(snapshot_start) / nrow(events), 1),
@@ -173,3 +185,40 @@ snapshot_start |>
             cor_x = cor(player_x, x_start, use = "complete.obs"),
             cor_y = cor(player_y, y_start, use = "complete.obs")) |>
   print()
+
+
+# 9. Join to the analysis 
+
+# join the target's start position (one game) onto the analysis dataset
+analysis <- analysis |>
+  mutate(event_id = as.character(event_id)) |>
+  left_join(target_pos_start, by = "event_id")   # target_pos_start already has character event_id
+
+# verify: only game 742721 rows should have values
+analysis |>
+  summarise(n = n(),
+            pct_has_target_start = mean(!is.na(player_targeted_x_start)) * 100)
+# expect: ~87% for TRUE (your 783 coverage), 0% for FALSE
+
+
+# Verify Coordinates x and y for the sitatuon when he have the chose_best_option TRUE
+analysis |>
+  filter(
+    chose_best_option %in% TRUE,
+    !is.na(player_targeted_x_pass),
+    !is.na(player_targeted_y_pass),
+    !is.na(best_option_x_end),
+    !is.na(best_option_y_end)
+  ) |>
+  summarise(
+    n = n(),
+    cor_x = cor(best_option_x_end, player_targeted_x_pass),
+    cor_y = cor(best_option_y_end, player_targeted_y_pass),
+    max_x_gap = max(abs(best_option_x_end - player_targeted_x_pass)),
+    max_y_gap = max(abs(best_option_y_end - player_targeted_y_pass))
+  )
+
+# Checking Logic 
+analysis|>
+  filter(PTR_raw == 0)|>
+  select(chose_best_option,player_targeted_x_pass, best_option_x_end )
