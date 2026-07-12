@@ -1,7 +1,6 @@
 make_tracking_features <- function(events, tracking, match, option_features) {
   
   
- 
   # 1. PLAYER LOOKUP TABLE
   
   players_lookup <- match$players |>
@@ -19,9 +18,7 @@ make_tracking_features <- function(events, tracking, match, option_features) {
   
   
   
-
   # 2. PLAYER TRACKING DATA
-
   players <- tracking |>
     select(frame, timestamp, period, player_data) |>
     unnest(player_data) |>
@@ -56,7 +53,6 @@ make_tracking_features <- function(events, tracking, match, option_features) {
   
   # 4. ATTACKING TEAM IDENTIFICATION
   
-  # Fill missing possession player IDs
   events <- events |>
     mutate(
       player_in_possession_id = if_else(
@@ -68,7 +64,6 @@ make_tracking_features <- function(events, tracking, match, option_features) {
     )
   
   
-  # Attach attacking team
   events <- events |>
     left_join(
       players_lookup |>
@@ -92,7 +87,7 @@ make_tracking_features <- function(events, tracking, match, option_features) {
       attacking_side
     )
   
-  #6. Attach best option coordinates 
+  # 6. ATTACH BEST OPTION COORDINATES
   
   events <- events |>
     left_join(
@@ -112,9 +107,8 @@ make_tracking_features <- function(events, tracking, match, option_features) {
     )
   
   
-  # 6b. STANDARDISE PLAYER COORDINATES
- 
-  # All attacks move left -> right
+  # 7. STANDARDISE PLAYER COORDINATES
+  
   players_std <- players |>
     left_join(
       team_direction,
@@ -142,7 +136,7 @@ make_tracking_features <- function(events, tracking, match, option_features) {
   
   
   
-  # 7. CREATE EVENT SNAPSHOTS
+  # 8. CREATE EVENT SNAPSHOTS
   # ===========================================================================
   
   snapshot_start <- events |>
@@ -160,7 +154,7 @@ make_tracking_features <- function(events, tracking, match, option_features) {
       players_std,
       by = c(
         "frame_start" = "frame"),
-        relationship = "many-to-many"
+      relationship = "many-to-many"
     ) |>
     mutate(
       side = if_else(
@@ -192,8 +186,7 @@ make_tracking_features <- function(events, tracking, match, option_features) {
       players_std,
       by = c(
         "frame_end" = "frame"),
-        relationship = "many-to-many"
-
+      relationship = "many-to-many"
     ) |>
     mutate(
       side = if_else(
@@ -208,7 +201,7 @@ make_tracking_features <- function(events, tracking, match, option_features) {
   
   
   
-  # 8. POLYGON AREA FUNCTION
+  # 9. POLYGON AREA FUNCTION
   # ===========================================================================
   
   polygon_area <- function(x, y) {
@@ -231,13 +224,9 @@ make_tracking_features <- function(events, tracking, match, option_features) {
   }
   
   
-  
-  # 8.b  Point-to-segment helper function
-  
-  # Distance from point (px,py) (Defenders position) to segment (ax,ay)-(bx,by) (A is the ball carrier, B is the targeted)
-  # plus whether the closest point falls within the segment
+  # 10. DISTANCE FROM POINT TO SEGMENT
   # ===========================================================================
-
+  
   dist_point_to_segment <- function(px, py, ax, ay, bx, by) {
     
     abx <- bx - ax
@@ -245,7 +234,6 @@ make_tracking_features <- function(events, tracking, match, option_features) {
     
     seg_len_sq <- abx^2 + aby^2
     
-    # t = projection of AP onto AB, normalized
     t <- if_else(
       seg_len_sq == 0,
       0,
@@ -264,8 +252,8 @@ make_tracking_features <- function(events, tracking, match, option_features) {
     tibble(dist = dist, in_segment = in_segment)
   }
   
-
-   # 9. FULL DEFENSIVE TEAM COMPACTNESS
+  
+  # 11. FULL DEFENSIVE TEAM COMPACTNESS
   # ===========================================================================
   
   team_compactness_start <- snapshot_start |>
@@ -273,7 +261,7 @@ make_tracking_features <- function(events, tracking, match, option_features) {
     group_by(match_id, event_id) |>
     summarise(
       
-      team_surface_area =polygon_area(player_x, player_y),
+      team_surface_area = polygon_area(player_x, player_y),
       
       team_spread = sum( (player_x - mean(player_x))^2 + (player_y - mean(player_y))^2),
       
@@ -301,7 +289,7 @@ make_tracking_features <- function(events, tracking, match, option_features) {
   
   
   
-  # 10. FIVE NEAREST DEFENDERS COMPACTNESS
+  # 12. FIVE NEAREST DEFENDERS COMPACTNESS
   # ===========================================================================
   
   dc_ball_near_start <- snapshot_start |>
@@ -364,7 +352,7 @@ make_tracking_features <- function(events, tracking, match, option_features) {
   
   
   
-   # 11. DEFENSIVE UNIT COMPACTNESS
+  # 13. DEFENSIVE UNIT COMPACTNESS
   # ===========================================================================
   
   defensive_positions <- c(
@@ -403,7 +391,7 @@ make_tracking_features <- function(events, tracking, match, option_features) {
       side == "defense",
       position_acronym %in% defensive_positions
     ) |>
-    group_by(match_id,event_id) |>
+    group_by(match_id, event_id) |>
     summarise(
       
       dc_defmid_surface_area_end =
@@ -420,10 +408,8 @@ make_tracking_features <- function(events, tracking, match, option_features) {
   
   
   
+  # 14. DEFENDER PROXIMITY FEATURES — ball carrier
   # ===========================================================================
-  # 12. DEFENDER PROXIMITY FEATURES ball carrier 
-  # ===========================================================================
-  
   
   proximity_start <- snapshot_start |>
     filter(side == "defense") |>
@@ -477,8 +463,7 @@ make_tracking_features <- function(events, tracking, match, option_features) {
   
   
   
-  
-  # 12b. DEFENDER PROXIMITY TO BEST OPTION
+  # 15. DEFENDER PROXIMITY TO BEST OPTION
   # ===========================================================================
   
   proximity_best_option_start <- snapshot_start |>
@@ -507,7 +492,11 @@ make_tracking_features <- function(events, tracking, match, option_features) {
         sum(dist_to_best_option <= 5, na.rm = TRUE),
       
       .groups = "drop"
-    ) 
+    ) |>
+    mutate(
+      nearest_def_dist_best_option =
+        if_else(is.infinite(nearest_def_dist_best_option), NA_real_, nearest_def_dist_best_option)
+    )
   
   
   proximity_best_option_end <- snapshot_end |>
@@ -523,7 +512,7 @@ make_tracking_features <- function(events, tracking, match, option_features) {
             (player_y - best_option_y)^2
         )
     ) |>
-    group_by(match_id,event_id) |>
+    group_by(match_id, event_id) |>
     summarise(
       
       nearest_def_dist_best_option_end =
@@ -536,12 +525,15 @@ make_tracking_features <- function(events, tracking, match, option_features) {
         sum(dist_to_best_option <= 5, na.rm = TRUE),
       
       .groups = "drop"
-    ) 
+    ) |>
+    mutate(
+      nearest_def_dist_best_option_end =
+        if_else(is.infinite(nearest_def_dist_best_option_end), NA_real_, nearest_def_dist_best_option_end)
+    )
   
   
   
-  
-  # 12c. PASSING LANE FEATURES (carrier -> best option, carrier -> targeted player)
+  # 16. PASSING LANE FEATURES (carrier -> best option, carrier -> targeted player)
   # ===========================================================================
   
   CORRIDOR_WIDTH <- 2  # lane width
@@ -556,8 +548,8 @@ make_tracking_features <- function(events, tracking, match, option_features) {
         x_end, y_end,
         best_option_x, best_option_y
       ),
-      dist_to_best_option_lane = lane_to_best_option$dist,       # perp distance
-      in_best_option_lane_bounds = lane_to_best_option$in_segment, # within segment
+      dist_to_best_option_lane = lane_to_best_option$dist,
+      in_best_option_lane_bounds = lane_to_best_option$in_segment,
       
       # lane to targeted player
       lane_to_targeted = dist_point_to_segment(
@@ -565,8 +557,8 @@ make_tracking_features <- function(events, tracking, match, option_features) {
         x_end, y_end,
         player_targeted_x_pass, player_targeted_y_pass
       ),
-      dist_to_targeted_lane = lane_to_targeted$dist,       # perp distance
-      in_targeted_lane_bounds = lane_to_targeted$in_segment # within segment
+      dist_to_targeted_lane = lane_to_targeted$dist,
+      in_targeted_lane_bounds = lane_to_targeted$in_segment
       
     ) |>
     group_by(match_id, event_id) |>
@@ -574,41 +566,39 @@ make_tracking_features <- function(events, tracking, match, option_features) {
       
       # best option lane
       min_dist_to_best_option_lane =
-        suppressWarnings(min(dist_to_best_option_lane, na.rm = TRUE)),   # closest defender
+        suppressWarnings(min(dist_to_best_option_lane, na.rm = TRUE)),
       
       n_defenders_in_best_option_lane =
         sum(
           dist_to_best_option_lane <= CORRIDOR_WIDTH &
             in_best_option_lane_bounds,
           na.rm = TRUE
-        ),  # count blocking
+        ),
       
       # targeted player lane
       min_dist_to_targeted_lane =
-        suppressWarnings(min(dist_to_best_option_lane, na.rm = TRUE)),   # closest defender
+        suppressWarnings(min(dist_to_targeted_lane, na.rm = TRUE)),
       
       n_defenders_in_targeted_lane =
         sum(
           dist_to_targeted_lane <= CORRIDOR_WIDTH &
             in_targeted_lane_bounds,
           na.rm = TRUE
-        ),  # count blocking
+        ),
       
       .groups = "drop"
+    ) |>
+    mutate(
+      min_dist_to_best_option_lane =
+        if_else(is.infinite(min_dist_to_best_option_lane), NA_real_, min_dist_to_best_option_lane),
+      min_dist_to_targeted_lane =
+        if_else(is.infinite(min_dist_to_targeted_lane), NA_real_, min_dist_to_targeted_lane)
     )
   
   
   
-  
-  
-  
-  
-  
-  
- 
-    # 13. FINAL TRACKING FEATURE TABLE
+  # 17. FINAL TRACKING FEATURE TABLE
   # ===========================================================================
-  
   
   tracking_features <- list(
     
@@ -636,42 +626,28 @@ make_tracking_features <- function(events, tracking, match, option_features) {
     ) |>
     mutate(
       
-      # Team structure change
       team_surface_area_gain = team_surface_area_end - team_surface_area,
       team_spread_gain = team_spread_end - team_spread,
       
-      
-      
-      # Local defensive structure change
       nearest_surface_area_gain = nearest_surface_area_end - nearest_surface_area,
       nearest_spread_gain = nearest_spread_end - nearest_spread,
       
-      
-      # Defensive unit change
       dc_defmid_surface_area_gain = dc_defmid_surface_area_end - dc_defmid_surface_area,
       dc_defmid_spread_gain = dc_defmid_spread_end - dc_defmid_spread,
       
-      
-      # Defender pressure change
       nearest_def_dist_gain = nearest_def_dist_end - nearest_def_dist,
-      
       second_nearest_def_dist_gain = second_nearest_def_dist_end - second_nearest_def_dist,
-      
       n_within_5m_gain = n_within_5m_end - n_within_5m,
-
       
       best_option_nearest_def_dist_gain =
         nearest_def_dist_best_option_end - nearest_def_dist_best_option,
-      
       best_option_second_nearest_def_dist_gain =
         second_nearest_def_dist_best_option_end - second_nearest_def_dist_best_option,
-      
       best_option_n_within_5m_gain =
-        n_within_5m_best_option_end - n_within_5m_best_option, 
+        n_within_5m_best_option_end - n_within_5m_best_option,
       
       lane_obstruction_diff = min_dist_to_targeted_lane - min_dist_to_best_option_lane,
       lane_count_diff = n_defenders_in_targeted_lane - n_defenders_in_best_option_lane
-      
       
     )
   
@@ -679,5 +655,3 @@ make_tracking_features <- function(events, tracking, match, option_features) {
   return(tracking_features)
   
 }
-
-  
