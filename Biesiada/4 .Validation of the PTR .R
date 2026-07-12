@@ -150,32 +150,9 @@ cat("'Engaged, unknown':",
 # Passed: no "Engaged, unknown" cases and no missing carrier_central values
 # This suggests the engagement labels and channel coding are working correctly
 
-# 10. MODEL-TIER VALIDATION -- re-verify what subsetting CAN change
-#--------------------------------------------------------------------------------
-
-# 10a. Zero share in the model tier (motivates the zero-inflated beta)
-cat("Share PTR > 0 (model tier):",
-    round(mean(analysis_model$PTR > 0) * 100, 1), "%\n")
-
-# 10b. Construct validity in the model tier
-analysis_model |>
-  group_by(defensive_outcome) |>
-  summarise(n = n(), mean_PTR = mean(PTR),
-            pct_positive = mean(PTR > 0) * 100, .groups = "drop") |>
-  arrange(desc(mean_PTR)) |>
-  print()
-
-# 10c. Engagement contrast in the model tier
-analysis_model |>
-  group_by(engaged) |>
-  summarise(n = n(), mean_PTR = mean(PTR), .groups = "drop") |>
-  print()
-
-# Passed: the stricter model sample keeps the same main patterns
-# Suppression and Forced backward remain highest, and engaged possessions still have higher PTR than unengaged  
 
 
-# 11. PREDICTIVE VALIDITY
+# 10 PREDICTIVE VALIDITY
 # CONDITIONAL VERSION:
 # Restrict to possessions where a dangerous realistic option existed.
 # This makes the comparison fairer because all rows had meaningful danger available,

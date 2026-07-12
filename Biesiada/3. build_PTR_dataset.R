@@ -43,7 +43,7 @@ files <- list.files(
 )
 
 # keep only first 200 games
-files_200 <- files[1:200]
+files_200 <- files[1:50]
 
 # read and combine 200 games
 dynamic_200 <- do.call(
@@ -68,9 +68,6 @@ to_bool <- function(x) {
     TRUE ~ NA
   )
 }
-
-events <- dynamic_200
-
 
 # 1. SPLIT INTO EVENT TABLES
 # ------------------------------------------------------------------------------
@@ -280,303 +277,303 @@ obe_summary <- obe |>
                                      NA_real_, mean_engagement_speed)
   )
 
-# 4. BUILD THE ANALYSIS DATASET (one row = one possession ending in a pass)
+
+# 4.TARGETED PLAYER'S START POSITION
+#      The targeted pass IS an option event, so its start coordinates live in
+#      the options table -- same source as best_option_*, so when PTR == 0
+#      (same option row) the coordinates match EXACTLY.
+# ------------------------------------------------------------------------------
+targeted_option_coords <- options |>
+  transmute(
+    match_id = as.character(match_id),
+    targeted_passing_option_event_id = as.character(event_id),
+    player_targeted_x_start = x_start,     # where the receiver stood when
+    player_targeted_y_start = y_start      # his option event began
+  ) |>
+  distinct(match_id, targeted_passing_option_event_id, .keep_all = TRUE)
+
+
+# 5. BUILD THE ANALYSIS DATASET (one row = one possession ending in a pass) --
 # I add the information about: 
 #   the pass the attacker chose
 #   the passing options available
 #   the defensive engagement against the ball carrier
-# ------------------------------------------------------------------------------
 analysis <- possessions |>
-  filter(!is.na(targeted_passing_option_event_id)) |>
-  mutate(match_id = as.character(match_id),          # <<< ADD
-         event_id = as.character(event_id),          # <<< ADD
-         targeted_passing_option_event_id =          # <<< ADD (used vs
-           as.character(targeted_passing_option_event_id)) |>  # best_option_event_id
+  filter(!is.na(targeted_passing_option_event_id)) |>   # ended with a pass
+  
+  # keys as character AT THE SOURCE (all later joins/comparisons depend on it)
+  mutate(
+    match_id = as.character(match_id),
+    event_id = as.character(event_id),
+    targeted_passing_option_event_id =
+      as.character(targeted_passing_option_event_id)
+  ) |>
+  
   select(
-    match_id,event_id, player_id, player_name, team_id, # game_id
-    targeted_passing_option_event_id, 
+    ## keys + identity
+    match_id, event_id, player_id, player_name, team_id,
+    targeted_passing_option_event_id, player_targeted_id,
     
-    # tracking-join keys + direction flag
+    ## tracking-join keys + direction flag
     frame_start, frame_end, attacking_side,
     
-    # identity of the player actually targeted and x and y
-    player_targeted_id,player_targeted_x_pass,player_targeted_y_pass,
+    ## carrier position (possession event window)
+    carrier_x_start = x_start,  carrier_y_start = y_start,
+    carrier_x_end   = x_end,    carrier_y_end   = y_end,
     
-    # carrier positions, event coords (distance controls below)
-    x_start, y_start, x_end, y_end,
+    ## targeted receiver at the pass moment -> RENAMED pass -> end
+    player_targeted_x_end = player_targeted_x_pass,
+    player_targeted_y_end = player_targeted_y_pass,
     
-    # chosen pass -> What pass did the attacker choose, and how dangerous or difficult was it?
+    ## chosen pass: how dangerous / difficult was it?
     player_targeted_xthreat, player_targeted_xpass_completion,
     pass_direction, pass_distance, pass_range, pass_outcome,
-    quick_pass, one_touch, is_header, hand_pass, 
+    quick_pass, one_touch, is_header, hand_pass,
     
-    # pressure on the ball carrier (separation_gain = end - start) -> Did the attacker gain space or lose space during the possession?
+    ## pressure on the carrier (separation_gain = end - start)
     separation_start, separation_end, separation_gain,
     
-    # structure -> What defensive shape was the attacker facing?
+    ## defensive shape the attacker was facing
     organised_defense, defensive_structure, n_defensive_lines,
     inside_defensive_shape_start,
     last_defensive_line_height_start, delta_to_last_defensive_line_start,
     
-    # option availability (SkillCorner aggregates) -> How good was the attacker’s passing options?
+    ## option availability (SkillCorner aggregates)
     n_passing_options, n_passing_options_dangerous_not_difficult,
     n_passing_options_dangerous_difficult, n_passing_options_line_break,
     n_passing_options_ahead,
     
-    # context controls (channel_start = the CARRIER's channel here) -> What was the situation when the pass happened?
+    ## context controls (channel_start = the CARRIER's channel)
     team_out_of_possession_phase_type, third_start, channel_start,
     game_state, duration,
     
-    # outcomes for predictive validation (10s window) --> NEVER predictors
+    ## outcomes for validation (10s window) -- NEVER predictors
     lead_to_shot, lead_to_goal,
     
-    # data quality -> Can we trust the tracking data for this possession? (Matching SkillCorner tracking data with the start and end of the possession)
+    ## data quality: can we trust the tracking for this possession?
     is_player_possession_start_matched, is_player_possession_end_matched
   ) |>
+  
+  # text booleans -> real TRUE/FALSE
   mutate(across(c(organised_defense, inside_defensive_shape_start,
                   quick_pass, one_touch, is_header,
                   lead_to_shot, lead_to_goal,
                   is_player_possession_start_matched,
-                  is_player_possession_end_matched), to_bool)) |> # Convert text booleans to real TRUE/FALSE
-  # integer casts AT THE SOURCE (compared to tracking ids/frames later)
+                  is_player_possession_end_matched),
+                to_bool)) |>
+  
+  # integer casts at the source (compared against tracking ids/frames later)
   mutate(
     player_targeted_id = as.integer(player_targeted_id),
     frame_start        = as.integer(frame_start),
     frame_end          = as.integer(frame_end)
   ) |>
+  
+  # options set, defensive engagements, targeted start position
   left_join(option_summary,
             by = c("match_id",
                    "event_id" = "associated_player_possession_event_id")) |>
   left_join(obe_summary,
             by = c("match_id",
                    "event_id" = "associated_player_possession_event_id")) |>
-  mutate(
-    # DISTANCES TO GOAL 
-    # carrier
-    dist_carrier_to_goal_start = sqrt((52.5 - x_start)^2 + (0 - y_start)^2),
-    dist_carrier_to_goal_end   = sqrt((52.5 - x_end)^2   + (0 - y_end)^2),
-    # best option
-    dist_option_to_goal_start  = sqrt((52.5 - best_option_x_start)^2 +
-                                        (0 - best_option_y_start)^2),
-    dist_option_to_goal_end    = sqrt((52.5 - best_option_x_end)^2 +
-                                        (0 - best_option_y_end)^2),
-    # targeted (pass moment only)
-    dist_target_to_goal        = sqrt((52.5 - player_targeted_x_pass)^2 +
-                                        (0 - player_targeted_y_pass)^2),
-    
-    # DISTANCES BETWEEN Carrier, Best Option and Targeted Option 
-    # carrier <-> best option, at both moments (did the option drift away
-    # from or toward the carrier during the possession?)
-    dist_carrier_to_option_start = sqrt((x_start - best_option_x_start)^2 +
-                                          (y_start - best_option_y_start)^2),
-    dist_carrier_to_option_end   = sqrt((x_end - best_option_x_end)^2 +
-                                          (y_end - best_option_y_end)^2),
-    # carrier <-> target (pass moment)
-    dist_carrier_to_target       = sqrt((x_end - player_targeted_x_pass)^2 +
-                                          (y_end - player_targeted_y_pass)^2),
-    # target <-> best option at the pass (how far apart were the chosen and
-    # declined destinations? 0 when he took the best option)
-    dist_target_to_option        = sqrt((player_targeted_x_pass - best_option_x_end)^2 +
-                                          (player_targeted_y_pass - best_option_y_end)^2),
-    
-    # MOVEMENT: BEST OPTION'S RUN (event window)
-    best_option_run_dist    = sqrt((best_option_x_end - best_option_x_start)^2 +
-                                     (best_option_y_end - best_option_y_start)^2),
-    best_option_run_forward = best_option_x_end - best_option_x_start,  # + = to goal
-    best_option_run_lateral = best_option_y_end - best_option_y_start,  # signed
-    best_option_run_angle   = ifelse(best_option_run_dist > 1,
-                                     atan2(best_option_y_end - best_option_y_start,
-                                           best_option_x_end - best_option_x_start) * 180 / pi,
-                                     NA_real_),
-    
-    # MOVEMENT: CARRIER (possession window; = the carry) 
-    carrier_move_dist    = sqrt((x_end - x_start)^2 + (y_end - y_start)^2),
-    carrier_move_forward = x_end - x_start,                             # + = to goal
-    carrier_move_lateral = y_end - y_start,                             # signed
-    carrier_move_angle   = ifelse(carrier_move_dist > 1,
-                                  atan2(y_end - y_start,
-                                        x_end - x_start) * 180 / pi,
-                                  NA_real_),
-    
-    n_engagements = replace_na(n_engagements, 0L),
-    engaged       = n_engagements > 0, # Did the defense engage the ball carrier or not?
-    
-    # After the left_join, unengaged possessions have NA for all OBE
-    # No engagement = the action genuinely didn't happen -> FALSE.
-    across(any_of(c("any_pressing", "any_pressure", "any_counter_press",
-                    "any_recovery_press", "any_other_engagement",
-                    "in_pressing_chain", "any_goalside_start",
-                    "any_close_at_start", "any_simultaneous_same_target",
-                    "any_engagement_from_attacking_third",
-                    "any_engagement_from_defensive_third",
-                    "any_engagement_from_wide",
-                    "any_beaten_by_possession",
-                    "any_beaten_by_movement",
-                    "stop_possession_danger", "reduce_possession_danger",
-                    "force_backward")),
-           ~ replace_na(.x, FALSE)),
-    
-    # Create coach friendly engagement type -> simple label for the type of defensive engagement
-    # Two versions of this info exist:
-    #   - any_ FLAGS: can overlap  -> use in MODELS
-    #   - this LABEL: one per row   -> use in TABLES, never as predictor
-    # case_when = priority ladder, first match wins:
-    # counter press > recovery press > pressing > pressure > other
-    # Never reorder later -- it would change all past tables
-    engagement_type_group = case_when(
-      !engaged             ~ "No engagement",
-      any_counter_press    ~ "Counter press",
-      any_recovery_press   ~ "Recovery press",
-      any_pressing         ~ "Pressing",
-      any_pressure         ~ "Pressure",
-      any_other_engagement ~ "Other engagement",
-      TRUE                 ~ "Engaged, unknown"   # data-quality canary: ~0 expected
-    ),
-    
-    # Create coach friendly engagement zone -> Did the defense pressure high, middle, or deep?
-    engagement_zone = case_when(
-      !engaged                            ~ "No engagement",
-      any_engagement_from_attacking_third ~ "High engagement",
-      any_engagement_from_defensive_third ~ "Deep engagement",
-      engaged                             ~ "Middle engagement",
-      TRUE                                ~ "Unknown"
-    ),
-    
-    # Passing options existed, but none had xPass completion above 0.68
-    # This may indicate defensive denial, so we flag it instead of dropping it.
-    no_realistic_option = !is.na(max_xthreat_all) & is.na(max_xthreat_realistic),
-    
-    # This identifies possessions that were very short 
-    # The player had very little time to make a decision
-    short_possession = one_touch %in% TRUE | replace_na(duration < 0.5, FALSE),
-    
-    #     Disruption possessions:
-    #     Disruption phases may involve deflections, blocked actions, loose balls,
-    #     The player may not have enough control to make a real passing decision.
-    #     Since PTR compares the chosen pass to the best available option, I flag
-    #     these possessions and we want to remove them from the main model
-    disruption_possession = case_when(
-      is.na(team_out_of_possession_phase_type) ~ NA,
-      team_out_of_possession_phase_type == "disruption" ~ TRUE,
-      TRUE ~ FALSE
-    ),
-    
-    # Check if chosen pass was realistic
-    # NA when xpass_completion is missing (tracking gap): unknown != FALSE.
-    #   Descriptive / outcome-side only --> NOT a predictor of PTR.
-    chosen_pass_realistic = case_when(
-      is.na(player_targeted_xpass_completion) ~ NA,
-      player_targeted_xpass_completion > 0.68 ~ TRUE,
-      TRUE                                    ~ FALSE
-    ),
-    
-    # This checks whether the ball carrier started in a central zone
-    # Wide zones are everything else
-    # Was the ball carrier in the center or half space?
-    carrier_central = case_when(
-      is.na(channel_start) ~ NA,
-      channel_start %in% c("center", "half_space_left",
-                           "half_space_right") ~ TRUE,
-      TRUE ~ FALSE
-    ),
-    
-    # THE METRIC --------------------------------------------------------------
-    # This creates the raw version of Passing Threat Reduction -> Swayam version
-    # Raw PTR compares the chosen pass to the most dangerous option, even if that option was difficult
-    PTR_raw = ifelse(
-      !is.na(player_targeted_xthreat) & !is.na(max_xthreat_all),
-      pmax(max_xthreat_all - player_targeted_xthreat, 0),
-      NA_real_
-    ),
-    
-    # Julia's new improved metric 
-    # Did the attacker choose below their best realistic dangerous option?
-    PTR = ifelse(
-      !is.na(player_targeted_xthreat) & !is.na(max_xthreat_realistic),
-      pmax(max_xthreat_realistic - player_targeted_xthreat, 0),
-      NA_real_
-    ),
-    
-    # Explain why PTR is present or missing -> This creates a label explaining whether PTR was calculated
-    # Why do we have or not have PTR for this possession?
-    PTR_status = case_when(
-      is.na(max_xthreat_all) ~ "No xThreat option data",
-      no_realistic_option    ~ "Options existed, none realistic",
-      !is.na(PTR)            ~ "PTR calculated",
-      TRUE                   ~ "Chosen pass xthreat missing"
-    ),
-    
-    # Check whether attacker chose the best realistic option -> compares targeted_passing_option_event_id with best_option_event_id
-    # Did the attacker pick the best realistic passing option?
-    chose_best_option = ifelse(
-      is.na(best_option_event_id),
-      NA,
-      as.character(targeted_passing_option_event_id) ==
-        as.character(best_option_event_id)
-    ),
-    # overreach
-    # Risky pass whose threat exceeded the best realistic option but whose
-    # completion probability fell below the realism threshold.
-    # Kept in analysis_clean (validation/EDA + separate discussion);
-    # excluded from the model tier only.
-    is_overreach = chose_best_option %in% FALSE & PTR == 0 &
-      !chosen_pass_realistic %in% TRUE,
-    
-    # Create defensive outcome label
-    # What did the defense achieve on this possession?
-    # WHERE TO USE WHAT:
-    #   FLAGS (any()) (stop_possession_danger, reduce_possession_danger,
-    #          force_backward):
-    #     -> validation checks: does high PTR line up with these? 
-    #     -> alternative targets: for example logistic model predicting suppression
-    #     -> NEVER as predictors of PTR (they measure the outcome we're validating against
-    #   LABEL(case_when) (this column, one value per row):
-    #     -> group_by tables comparing mean PTR across outcomes
-    #     -> figures and summaries
-    #     -> NEVER in any model at all
-    # case_when = priority ladder, first match wins:
-    # stop > suppression > forced backward > engaged > no engagement
-    # (strongest defensive result first). Never reorder after results exist
-    
-    defensive_outcome = case_when(
-      stop_possession_danger   ~ "Stop (turnover)",
-      reduce_possession_danger ~ "Suppression",
-      force_backward           ~ "Forced backward",
-      engaged                  ~ "Engaged, no outcome",
-      TRUE                     ~ "No engagement"
-    )
+  left_join(targeted_option_coords,
+            by = c("match_id", "targeted_passing_option_event_id"),
+            relationship = "many-to-one") |>
+  
+
+# GEOMETRY -- symmetric for all three actors, at BOTH moments
+#      Goal center = (52.5, 0) in the standardized frame.
+mutate(
+  ## DISTANCE TO GOAL --------------------------------------------------------
+  dist_carrier_to_goal_start = sqrt((52.5 - carrier_x_start)^2 + carrier_y_start^2),
+  dist_carrier_to_goal_end   = sqrt((52.5 - carrier_x_end)^2   + carrier_y_end^2),
+  
+  dist_target_to_goal_start  = sqrt((52.5 - player_targeted_x_start)^2 +
+                                      player_targeted_y_start^2),
+  dist_target_to_goal_end    = sqrt((52.5 - player_targeted_x_end)^2 +
+                                      player_targeted_y_end^2),
+  
+  dist_option_to_goal_start  = sqrt((52.5 - best_option_x_start)^2 +
+                                      best_option_y_start^2),
+  dist_option_to_goal_end    = sqrt((52.5 - best_option_x_end)^2 +
+                                      best_option_y_end^2),
+  
+  ## DISTANCE BETWEEN Players -------------------------------------------------
+  # carrier <-> targeted receiver
+  dist_carrier_to_target_start = sqrt((carrier_x_start - player_targeted_x_start)^2 +
+                                        (carrier_y_start - player_targeted_y_start)^2),
+  dist_carrier_to_target_end   = sqrt((carrier_x_end - player_targeted_x_end)^2 +
+                                        (carrier_y_end - player_targeted_y_end)^2),
+  
+  # carrier <-> best option (did the option drift toward/away from the carrier?)
+  dist_carrier_to_option_start = sqrt((carrier_x_start - best_option_x_start)^2 +
+                                        (carrier_y_start - best_option_y_start)^2),
+  dist_carrier_to_option_end   = sqrt((carrier_x_end - best_option_x_end)^2 +
+                                        (carrier_y_end - best_option_y_end)^2),
+  
+  # targeted <-> best option (0 at both moments when he chose the best)
+  dist_target_to_option_start  = sqrt((player_targeted_x_start - best_option_x_start)^2 +
+                                        (player_targeted_y_start - best_option_y_start)^2),
+  dist_target_to_option_end    = sqrt((player_targeted_x_end - best_option_x_end)^2 +
+                                        (player_targeted_y_end - best_option_y_end)^2),
+  
+  ## MOVEMENT (start -> end), same shape for all three players --------------
+  # carrier (= the carry; possession window)
+  carrier_move_forward = carrier_x_end - carrier_x_start,        # + = to goal
+  carrier_move_lateral = carrier_y_end - carrier_y_start,        # signed
+  carrier_move_dist    = sqrt(carrier_move_forward^2 + carrier_move_lateral^2),
+  carrier_move_angle   = ifelse(carrier_move_dist > 1,
+                                atan2(carrier_move_lateral,
+                                      carrier_move_forward) * 180 / pi,
+                                NA_real_),
+  
+  # targeted receiver's run (option window)
+  target_run_forward = player_targeted_x_end - player_targeted_x_start,
+  target_run_lateral = player_targeted_y_end - player_targeted_y_start,
+  target_run_dist    = sqrt(target_run_forward^2 + target_run_lateral^2),
+  target_run_angle   = ifelse(target_run_dist > 1,
+                              atan2(target_run_lateral,
+                                    target_run_forward) * 180 / pi,
+                              NA_real_),
+  
+  # best option's run (option window)
+  option_run_forward = best_option_x_end - best_option_x_start,
+  option_run_lateral = best_option_y_end - best_option_y_start,
+  option_run_dist    = sqrt(option_run_forward^2 + option_run_lateral^2),
+  option_run_angle   = ifelse(option_run_dist > 1,
+                              atan2(option_run_lateral,
+                                    option_run_forward) * 180 / pi,
+                              NA_real_),
+  # angle from each player to goal center at end (0 = straight at goal, ±90 = level with it)
+  angle_carrier_to_goal_end = atan2(0 - carrier_y_end,
+                                    52.5 - carrier_x_end) * 180 / pi,
+  angle_target_to_goal_end  = atan2(0 - player_targeted_y_end,
+                                    52.5 - player_targeted_x_end) * 180 / pi,
+  angle_option_to_goal_end  = atan2(0 - best_option_y_end,
+                                    52.5 - best_option_x_end) * 180 / pi,
+
+  # DEFENSIVE ENGAGEMENT -----
+  n_engagements = replace_na(n_engagements, 0L),
+  engaged       = n_engagements > 0,
+  
+  # unengaged possessions have NA for all OBE flags after the join;
+  # no engagement = the action genuinely didn't happen -> FALSE
+  across(any_of(c("any_pressing", "any_pressure", "any_counter_press",
+                  "any_recovery_press", "any_other_engagement",
+                  "in_pressing_chain", "any_goalside_start",
+                  "any_close_at_start", "any_simultaneous_same_target",
+                  "any_engagement_from_attacking_third",
+                  "any_engagement_from_defensive_third",
+                  "any_engagement_from_wide",
+                  "any_beaten_by_possession", "any_beaten_by_movement",
+                  "stop_possession_danger", "reduce_possession_danger",
+                  "force_backward")),
+         ~ replace_na(.x, FALSE)),
+  
+  # coach-friendly LABEL (one per row): TABLES ONLY, never a predictor.
+  # priority ladder, first match wins -- never reorder after results exist
+  engagement_type_group = case_when(
+    !engaged             ~ "No engagement",
+    any_counter_press    ~ "Counter press",
+    any_recovery_press   ~ "Recovery press",
+    any_pressing         ~ "Pressing",
+    any_pressure         ~ "Pressure",
+    any_other_engagement ~ "Other engagement",
+    TRUE                 ~ "Engaged, unknown"    # data-quality canary: ~0 expected
+  ),
+  
+  # where did the pressure come from? (high / middle / deep)
+  engagement_zone = case_when(
+    !engaged                            ~ "No engagement",
+    any_engagement_from_attacking_third ~ "High engagement",
+    any_engagement_from_defensive_third ~ "Deep engagement",
+    engaged                             ~ "Middle engagement",
+    TRUE                                ~ "Unknown"
+  ),
+  
+
+  # QUALITY / CONTEXT FLAGS -----
+  # options existed but none above the realism threshold
+  # (possible defensive denial -> flagged, not dropped)
+  no_realistic_option = !is.na(max_xthreat_all) & is.na(max_xthreat_realistic),
+  
+  # very little time to decide
+  short_possession = one_touch %in% TRUE | replace_na(duration < 0.5, FALSE),
+  
+  # deflections / blocked actions / loose balls: no real passing decision
+  disruption_possession = case_when(
+    is.na(team_out_of_possession_phase_type)          ~ NA,
+    team_out_of_possession_phase_type == "disruption" ~ TRUE,
+    TRUE                                              ~ FALSE
+  ),
+  
+  # chosen pass realistic? NA when completion missing (unknown != FALSE)
+  # descriptive / outcome-side only -- NOT a predictor of PTR
+  chosen_pass_realistic = case_when(
+    is.na(player_targeted_xpass_completion)              ~ NA,
+    player_targeted_xpass_completion > 0.68 ~ TRUE,
+    TRUE                                                 ~ FALSE
+  ),
+  
+  # carrier in a central zone (center or half spaces)
+  carrier_central = case_when(
+    is.na(channel_start)                                          ~ NA,
+    channel_start %in% c("center", "half_space_left",
+                         "half_space_right")                      ~ TRUE,
+    TRUE                                                          ~ FALSE
+  ),
+  
+
+  # THE METRIC: PASSING THREAT REDUCTION ----
+  # raw version: chosen pass vs the most dangerous option, even if difficult
+  PTR_raw = ifelse(
+    !is.na(player_targeted_xthreat) & !is.na(max_xthreat_all),
+    pmax(max_xthreat_all - player_targeted_xthreat, 0),
+    NA_real_
+  ),
+  
+  # main version: chosen pass vs the best REALISTIC option
+  PTR = ifelse(
+    !is.na(player_targeted_xthreat) & !is.na(max_xthreat_realistic),
+    pmax(max_xthreat_realistic - player_targeted_xthreat, 0),
+    NA_real_
+  ),
+  
+  # why is PTR present or missing for this possession?
+  PTR_status = case_when(
+    is.na(max_xthreat_all) ~ "No xThreat option data",
+    no_realistic_option    ~ "Options existed, none realistic",
+    !is.na(PTR)            ~ "PTR calculated",
+    TRUE                   ~ "Chosen pass xthreat missing"
+  ),
+  
+  # did the attacker pick the best realistic option?
+  # (both ids are character already -- plain comparison)
+  chose_best_option = ifelse(
+    is.na(best_option_event_id),
+    NA,
+    targeted_passing_option_event_id == best_option_event_id
+  ),
+  
+  # overreach: threat beat the best realistic option, but completion fell
+  # below the realism threshold. Kept in analysis_clean (EDA + discussion);
+  # excluded from the model tier only.
+  is_overreach = chose_best_option %in% FALSE & PTR == 0 &
+    !chosen_pass_realistic %in% TRUE,
+  
+  # what did the defense achieve? LABEL: tables/figures only, never in models
+  # FLAGS (stop/reduce/force_backward): validation targets, never predictors
+  # priority ladder, strongest result first -- never reorder after results exist
+  defensive_outcome = case_when(
+    stop_possession_danger   ~ "Stop (turnover)",
+    reduce_possession_danger ~ "Suppression",
+    force_backward           ~ "Forced backward",
+    engaged                  ~ "Engaged, no outcome",
+    TRUE                     ~ "No engagement"
   )
+)
 
-# Checking for one game
-analysis|>
-  filter(event_id == "8_172")|>
-  select(best_option_run_angle,best_option_run_lateral,best_best_option_run_forward )
-  
-events|>
-  filter(event_id == "8_172")|>
-  select(player_targeted_angle_to_goal_start, player_targeted_angle_to_goal_end)
-  
-# Tracking of changes 
-# 07/10/2026
-#---- Option_summary
-# Added the identity and coordinates of the best realistic passing option start and end
-# The code keeps the option event ID, player ID, position at the passing moment,
-# and position at the beginning of the option event to measure player movement.
-
-# ---Analysis
-# Added frame information, attacking direction, targeted player identity,
-# targeted receiver coordinates end frame, and ball carrier coordinates start and end
-# Calculation: distance_to_goal by carrier, best option and targeted
-# distance between the carrier and best option, carrier and player targeted, player targeted and best option
-# movement of the best option player before the pass
-# angle of the best option, lateral run
-
-# checking this outcomes
-analysis|>
-  count(lead_to_goal, lead_to_shot, any_beaten_by_possession, any_beaten_by_movement)
-
-
-# 5. QUALITY FILTERS -----------------------------------------------------------
+# 6. QUALITY FILTERS -----------------------------------------------------------
 
 # Clean dataset for validation and EDA
 n_start <- nrow(analysis)
@@ -595,38 +592,79 @@ analysis_clean <- analysis |>
 cat("Possessions:", n_start, "->", nrow(analysis_clean),
     "(removed:", n_start - nrow(analysis_clean), ")\n") # How many was removed by filtering
 
-# COMPLETENESS CHECK -- must print character(0) or do not proceed
-# ------------------------------------------------------------------------------
-required <- c("frame_start","frame_end","attacking_side","player_targeted_id",
-              "x_start","y_start","x_end","y_end",
-              "best_option_player_id","best_option_x","best_option_y",
-              "dist_carrier_to_goal","dist_option_to_goal",
-              "dist_carrier_to_option")
-print(setdiff(required, names(analysis_clean)))
+# 7. Verification --------------------------------------------------------------
 
-cat("best_option_player_id coverage:",
-    round(mean(!is.na(analysis_clean$best_option_player_id)) * 100, 1), "%\n")
-
-events|>
-  select(event_id,player_targeted_distance_to_goal_start )
-
-# Saving for future work
-saveRDS(analysis_clean, "ptr_analysis_dataset_200.rds")
-saveRDS(analysis_model,  "ptr_model_dataset_200.rds")
+# Checking Logic of coordinates
+# they should match
+analysis_clean|>
+  filter(PTR == 0)|>
+  select(chose_best_option,player_targeted_x_start, best_option_x_start)
 
 
-# Checking
+analysis_clean |>
+  filter(PTR == 0) |>
+  mutate(
+    coordinates_exact_match =
+      player_targeted_x_start == best_option_x_start &
+      player_targeted_y_start == best_option_y_start &
+      player_targeted_x_end ==  best_option_x_end &
+      player_targeted_y_end == best_option_y_end
+  ) |>
+  count(coordinates_exact_match)
+
+
+
+
+# they should not match
+analysis_clean|>
+  filter(PTR > 0)|>
+  select(chose_best_option,player_targeted_x_end, best_option_x_end)
+
+# How many we have a best option and chosen PTR = 0 and PTR > 0
+table(analysis$chose_best_option)
+
 class(analysis_clean$lead_to_shot)   # should say "logical"
 table(analysis_clean$lead_to_shot, useNA = "always")
 
-
-# CHECKING WHEN PTR = 0
-ptr0 <- analysis_clean |> filter(PTR == 0)
-
-# A. How does PTR == 0 break down? Expect nearly all TRUE.
-ptr0 |> count(chose_best_option, chosen_pass_realistic)
+# checking this outcomes
+analysis|>
+  count(lead_to_goal, lead_to_shot, any_beaten_by_possession, any_beaten_by_movement)
 
 
-ptr0 <- analysis_clean |> filter(PTR == 0)
+# Checking for one game
+analysis|>
+  filter(event_id == "8_172")|>
+  select(best_option_run_angle,best_option_run_lateral,best_best_option_run_forward )
+
+events|>
+  filter(event_id == "8_172")|>
+  select(player_targeted_angle_to_goal_start, player_targeted_angle_to_goal_end)
+
+# 8. Saving for future work ----------------------------------------------------
+
+saveRDS(analysis_clean, "ptr_analysis_dataset_200.rds")
+saveRDS(analysis_model,  "ptr_model_dataset_200.rds")
+
+# Tracking of changes 
+# 07/10/2026
+#---- Option_summary
+# Added the identity and coordinates of the best realistic passing option start and end
+# The code keeps the option event ID, player ID, position at the passing moment,
+# and position at the beginning of the option event to measure player movement.
+
+# ---Analysis
+# Added frame information, attacking direction, targeted player identity,
+# targeted receiver coordinates end frame, and ball carrier coordinates start and end
+# Calculation: distance_to_goal by carrier, best option and targeted
+# distance between the carrier and best option, carrier and player targeted, player targeted and best option
+# movement of the best option player before the pass
+# angle of the best option, lateral run
 
 
+# 07/12/2026
+# Added Player Targeted coordinates at the start of the event 
+# When PTR = 0, the coordinates for player targeted and best option coordinates should match 
+# Otherwise it's different
+# When we have a situation when two players have max threat the same (chosen player and other option) 
+# let's say 0.3 the algorithm will chose the chosen player (targeted) first
+# added calculations of distances + geometry 

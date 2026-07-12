@@ -65,3 +65,7 @@ ball_long <- tracking |>
 players_with_ball <- players_joined |>
   left_join(ball_long, by = c("frame", "timestamp", "period"))
 
+
+# 6. Saving
+write_csv(players_joined,"players_joined.csv")
+write_csv(ball_long,"ball_long.csv")
