@@ -181,7 +181,7 @@ dc_ball_near_end <- snapshot_end |>
 # Compactness of the defenders and defensive midfielders
 
 dc_def_mid_start <- snapshot_start |>
-  filter(side == "defense", position_acronym %in% c("LB","LWB","LCB","CB","RCB","RWB","RB","LDM","DM","RDM")) |>
+  filter(side == "defense", position_acronym %in% c("LB","LWB","LCB","CB","RCB","RWB","RB","LDM","DM","RDM", "LM","CM","RM","AM")) |>
   group_by(event_id) |>
   summarise(
     dc_defmid_surface_area = polygon_area(player_x, player_y),
@@ -190,7 +190,7 @@ dc_def_mid_start <- snapshot_start |>
 
 
 dc_def_mid_end <- snapshot_end |>
-  filter(side == "defense", position_acronym %in% c("LB","LWB","LCB","CB","RCB","RWB","RB","LDM","DM","RDM")) |>
+  filter(side == "defense", position_acronym %in% c("LB","LWB","LCB","CB","RCB","RWB","RB","LDM","DM","RDM", "LM","CM","RM","AM")) |>
   group_by(event_id) |>
   summarise(
     dc_defmid_surface_area_end = polygon_area(player_x, player_y),
@@ -244,8 +244,6 @@ events <- events |>
     nearest_surface_area_gain = nearest_surface_area_end - nearest_surface_area,
     nearest_spread_gain = nearest_spread_end - nearest_spread,
     dc_def_mid_gain = dc_defmid_surface_area - dc_defmid_surface_area_end)
-
-
 
 
 

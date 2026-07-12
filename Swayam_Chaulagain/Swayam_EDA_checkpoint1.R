@@ -78,7 +78,7 @@ analysis_data <- dynamic_50 |>
     # DOS: how far below their best available option did the attacker go?
     DOS = ifelse(
       !is.na(player_targeted_xthreat),
-      pmax(max_xthreat_available - player_targeted_xthreat, 0),
+      max_xthreat_available - player_targeted_xthreat,
       NA_real_),
     
     # Defensive outcome — what did the defense achieve on this possession?
@@ -96,7 +96,13 @@ analysis_data <- analysis_data |>
   select(where(~ sum(!is.na(.)) > 0 & sum(. != "", na.rm = TRUE) > 0))
 
 
-
+analysis_data |>
+  summarise(
+    n_negative = sum(
+      (max_xthreat_available - player_targeted_xthreat) < 0,
+      na.rm = TRUE
+    )
+  )
 
 
 
@@ -167,6 +173,11 @@ dos_summary |>
 
 
 
+View(dynamic_50 |>
+  select(match_id, associated_player_possession_event_id, n_passing_options))
+
+
+
 
 
 
@@ -195,12 +206,12 @@ dos_summary |>
 
 
 # EDA 1: xThreat heatmap of passing options on pitch 
-passing_options_pos <- Event_data |>
+passing_options_pos <- dynamic_50 |>
   filter(event_type == "passing_option",
          !is.na(xthreat),
          !is.na(x_start), !is.na(y_start))
 
-geom_soccer("EPL") +
+geom_soccer("FIFA") +
   stat_summary_hex(data = passing_options_pos,
                    aes(x = x_start, y = y_start, z = xthreat),
                    fun = mean, bins = 20, alpha = 0.5) +
@@ -218,11 +229,11 @@ geom_soccer("EPL") +
 dos_spatial <- analysis_data |>
   filter(!is.na(DOS), !is.na(x_start), !is.na(y_start))
 
-geom_soccer("EPL") +
+geom_soccer("FIFA") +
   stat_summary_hex(
     data = dos_spatial,
     aes(x = x_start, y = y_start, z = DOS),
-    fun = mean, bins = 20, alpha = 0.5
+    fun = mean, bins = 25, alpha = 0.5
   ) +
   scale_fill_gradient2(
     low      = "skyblue",
@@ -236,22 +247,6 @@ geom_soccer("EPL") +
     subtitle = "Red = defense forced suboptimal choice | Skyblue = attacker found best option freely"
   ) +
   theme_void()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
