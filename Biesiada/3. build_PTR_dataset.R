@@ -84,39 +84,138 @@ obe         <- events |> filter(event_type_id == 9)
 #    so I use that label to connect them. 
 #    Matching by time instead would just guess based on when things happened, and can link the wrong events together.
 # ------------------------------------------------------------------------------
+
 option_summary <- options |>
   filter(!is.na(xthreat)) |>
-  mutate(realistic = !is.na(xpass_completion) & xpass_completion > 0.68) |>
-  group_by(match_id, associated_player_possession_event_id) |>
+  mutate(
+    match_id = as.character(match_id),
+    event_id = as.character(event_id),
+    associated_player_possession_event_id =
+      as.character(associated_player_possession_event_id),
+    
+    realistic =
+      !is.na(xpass_completion) &
+      xpass_completion > 0.68
+  ) |>
+  
+  left_join(
+    events |>
+      filter(event_type_id == 8) |>
+      transmute(
+        match_id = as.character(match_id),
+        
+        associated_player_possession_event_id =
+          as.character(event_id),
+        
+        # Give the joined variable a unique name
+        chosen_option_event_id =
+          as.character(targeted_passing_option_event_id)
+      ) |>
+      distinct(
+        match_id,
+        associated_player_possession_event_id,
+        .keep_all = TRUE
+      ),
+    by = c(
+      "match_id",
+      "associated_player_possession_event_id"
+    )
+  ) |>
+  
+  mutate(
+    is_targeted = replace_na(
+      event_id == chosen_option_event_id,
+      FALSE
+    )
+  ) |>
+  
+  group_by(
+    match_id,
+    associated_player_possession_event_id
+  ) |>
+  
+  arrange(
+    desc(xthreat),
+    desc(is_targeted),
+    event_id,
+    .by_group = TRUE
+  ) |>
+  
   summarise(
-    n_options_counted     = n(),
-    max_xthreat_all       = max(xthreat, na.rm = TRUE),
-    max_xthreat_realistic = ifelse(any(realistic),
-                                   max(xthreat[realistic], na.rm = TRUE),
-                                   NA_real_),
-    # Identify the best realistic option
-    best_option_event_id  = ifelse(any(realistic),
-                                   event_id[which.max(ifelse(realistic, xthreat, -Inf))][1],
-                                   NA_character_),
-    best_option_player_id = ifelse(any(realistic),
-                                   as.integer(player_id[which.max(ifelse(realistic, xthreat, -Inf))][1]),
-                                   NA_integer_),
-    # position at the pass moment (the fixused for plots + controls)
-    best_option_x_end = ifelse(any(realistic),
-                           x_end[which.max(ifelse(realistic, xthreat, -Inf))][1], NA_real_),
-    best_option_y_end = ifelse(any(realistic),
-                           y_end[which.max(ifelse(realistic, xthreat, -Inf))][1], NA_real_),
-    # position when his option-event began (kept ONLY to derive movement)
-    best_option_x_start = ifelse(any(realistic),
-                                 x_start[which.max(ifelse(realistic, xthreat, -Inf))][1], NA_real_),
-    best_option_y_start = ifelse(any(realistic),
-                                 y_start[which.max(ifelse(realistic, xthreat, -Inf))][1], NA_real_),
-    .groups = "drop"                                
+    n_options_counted = n(),
+    n_options_realistic = sum(realistic),
+    n_options_na_completion = sum(is.na(xpass_completion)),
+    
+    max_xthreat_all = max(xthreat),
+    
+    max_xthreat_realistic =
+      if (any(realistic)) {
+        max(xthreat[realistic])
+      } else {
+        NA_real_
+      },
+    
+    best_was_tied =
+      if (any(realistic)) {
+        sum(
+          realistic &
+            xthreat == max(xthreat[realistic])
+        ) > 1
+      } else {
+        NA
+      },
+    
+    best_option_event_id =
+      if (any(realistic)) {
+        first(event_id[realistic])
+      } else {
+        NA_character_
+      },
+    
+    best_option_player_id =
+      if (any(realistic)) {
+        as.integer(first(player_id[realistic]))
+      } else {
+        NA_integer_
+      },
+    
+    best_option_x_end =
+      if (any(realistic)) {
+        first(x_end[realistic])
+      } else {
+        NA_real_
+      },
+    
+    best_option_y_end =
+      if (any(realistic)) {
+        first(y_end[realistic])
+      } else {
+        NA_real_
+      },
+    
+    best_option_x_start =
+      if (any(realistic)) {
+        first(x_start[realistic])
+      } else {
+        NA_real_
+      },
+    
+    best_option_y_start =
+      if (any(realistic)) {
+        first(y_start[realistic])
+      } else {
+        NA_real_
+      },
+    
+    .groups = "drop"
   )
 
 # 3. DEFENSIVE (OBE) FEATURES PER POSSESSION
 # ------------------------------------------------------------------------------
 obe_summary <- obe |>
+  mutate(match_id = as.character(match_id),                          # NEW
+         associated_player_possession_event_id =                     # NEW
+           as.character(associated_player_possession_event_id)) |>
   mutate(across(c(stop_possession_danger, reduce_possession_danger,
                   force_backward, pressing_chain, goal_side_start,
                   close_at_player_possession_start, possession_danger,
@@ -188,10 +287,14 @@ obe_summary <- obe |>
 #   the defensive engagement against the ball carrier
 # ------------------------------------------------------------------------------
 analysis <- possessions |>
-  filter(!is.na(targeted_passing_option_event_id)) |>   # ended with a pass
+  filter(!is.na(targeted_passing_option_event_id)) |>
+  mutate(match_id = as.character(match_id),          # <<< ADD
+         event_id = as.character(event_id),          # <<< ADD
+         targeted_passing_option_event_id =          # <<< ADD (used vs
+           as.character(targeted_passing_option_event_id)) |>  # best_option_event_id
   select(
     match_id,event_id, player_id, player_name, team_id, # game_id
-    targeted_passing_option_event_id,
+    targeted_passing_option_event_id, 
     
     # tracking-join keys + direction flag
     frame_start, frame_end, attacking_side,
@@ -411,6 +514,13 @@ analysis <- possessions |>
       as.character(targeted_passing_option_event_id) ==
         as.character(best_option_event_id)
     ),
+    # overreach
+    # Risky pass whose threat exceeded the best realistic option but whose
+    # completion probability fell below the realism threshold.
+    # Kept in analysis_clean (validation/EDA + separate discussion);
+    # excluded from the model tier only.
+    is_overreach = chose_best_option %in% FALSE & PTR == 0 &
+      !chosen_pass_realistic %in% TRUE,
     
     # Create defensive outcome label
     # What did the defense achieve on this possession?
@@ -475,22 +585,15 @@ analysis_clean <- analysis |>
   filter(!is_header %in% TRUE) |>        # remove headers: not normal pass/xThreat logic
   filter(!hand_pass %in% TRUE) |>        # remove hand/throw-in type actions if present
   filter(is_player_possession_end_matched %in% TRUE) |>  # pass moment reliably tracked
-  filter(!is.na(PTR))                    # PTR is computable
-
-
-cat("Possessions:", n_start, "->", nrow(analysis_clean),
-    "(removed:", n_start - nrow(analysis_clean), ")\n") # How many was removed by filtering
-
-# Stricter Idea for main models
-analysis_model <- analysis_clean |>
+  filter(!is.na(PTR))|>                    # PTR is computable
+  filter(!is_overreach %in% TRUE)|>          # Removing Gamblers
   filter(is_player_possession_start_matched %in% TRUE) |> # start features reliable
   filter(!short_possession) |>                            # remove one-touch/very short actions
   filter(!disruption_possession %in% TRUE)                # remove messy/loose-ball actions
 
-# Representation of all changes
-cat("Full -> clean -> model:",
-    nrow(analysis), "->", nrow(analysis_clean), "->", nrow(analysis_model), "\n")
 
+cat("Possessions:", n_start, "->", nrow(analysis_clean),
+    "(removed:", n_start - nrow(analysis_clean), ")\n") # How many was removed by filtering
 
 # COMPLETENESS CHECK -- must print character(0) or do not proceed
 # ------------------------------------------------------------------------------
@@ -499,10 +602,10 @@ required <- c("frame_start","frame_end","attacking_side","player_targeted_id",
               "best_option_player_id","best_option_x","best_option_y",
               "dist_carrier_to_goal","dist_option_to_goal",
               "dist_carrier_to_option")
-print(setdiff(required, names(analysis_model)))
+print(setdiff(required, names(analysis_clean)))
 
 cat("best_option_player_id coverage:",
-    round(mean(!is.na(analysis_model$best_option_player_id)) * 100, 1), "%\n")
+    round(mean(!is.na(analysis_clean$best_option_player_id)) * 100, 1), "%\n")
 
 events|>
   select(event_id,player_targeted_distance_to_goal_start )
@@ -515,3 +618,15 @@ saveRDS(analysis_model,  "ptr_model_dataset_200.rds")
 # Checking
 class(analysis_clean$lead_to_shot)   # should say "logical"
 table(analysis_clean$lead_to_shot, useNA = "always")
+
+
+# CHECKING WHEN PTR = 0
+ptr0 <- analysis_clean |> filter(PTR == 0)
+
+# A. How does PTR == 0 break down? Expect nearly all TRUE.
+ptr0 |> count(chose_best_option, chosen_pass_realistic)
+
+
+ptr0 <- analysis_clean |> filter(PTR == 0)
+
+
