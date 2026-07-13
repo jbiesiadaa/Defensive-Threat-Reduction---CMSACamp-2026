@@ -10,6 +10,15 @@ build_analysis_dataset <- function(events,
       event_type_id == 8,
       !is.na(targeted_passing_option_event_id)
     ) |>
+    select(
+      -any_of(
+        c(
+          "stop_possession_danger",
+          "reduce_possession_danger",
+          "force_backward"
+        )
+      )
+    ) |>
     
     left_join(
       option_features,
