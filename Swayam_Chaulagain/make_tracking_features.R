@@ -84,6 +84,11 @@ make_tracking_features <- function(events, tracking, match, option_features, tar
         select(
           match_id,
           associated_player_possession_event_id,
+          best_option_event_id,
+          best_option_player_id,
+          best_was_tied,
+          max_xthreat_all,
+          max_xthreat_realistic,
           best_option_x_start,
           best_option_y_start,
           best_option_x,
