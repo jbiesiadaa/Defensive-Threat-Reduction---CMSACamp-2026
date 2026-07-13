@@ -66,9 +66,32 @@ make_option_features <- function(events) {
     )
   
   
+  
 
 
   
   option_features
+  
+}
+
+
+# targeted option coordinates
+make_targeted_option_coords <- function(events) {
+  
+  targeted_option_coords <- events |> 
+    filter(event_type_id == 7) |>
+    transmute(
+      match_id,
+      targeted_passing_option_event_id = event_id,
+      player_targeted_x_start = x_start,
+      player_targeted_y_start = y_start
+    ) |>
+    distinct(
+      match_id,
+      targeted_passing_option_event_id,
+      .keep_all = TRUE
+    )
+  
+  targeted_option_coords
   
 }

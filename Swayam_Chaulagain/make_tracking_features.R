@@ -1,4 +1,4 @@
-make_tracking_features <- function(events, tracking, match, option_features) {
+make_tracking_features <- function(events, tracking, match, option_features, targeted_option_coords) {
   
   
   # 1. PLAYER LOOKUP TABLE
@@ -106,6 +106,13 @@ make_tracking_features <- function(events, tracking, match, option_features) {
       )
     )
   
+  # 6b. ATTACH TARGETED OPTION COORDINATES
+  events <- events |>
+    left_join(
+      targeted_option_coords,
+      by = c("match_id", "targeted_passing_option_event_id")
+    )
+  
   
   # 7. STANDARDISE PLAYER COORDINATES
   
@@ -148,7 +155,8 @@ make_tracking_features <- function(events, tracking, match, option_features) {
       x_start,
       y_start,
       best_option_x_start,
-      best_option_y_start
+      best_option_y_start,
+      player_targeted_x_start, player_targeted_y_start
     ) |>
     left_join(
       players_std,
@@ -533,7 +541,62 @@ make_tracking_features <- function(events, tracking, match, option_features) {
   
   
   
-  # 16. PASSING LANE FEATURES (carrier -> best option, carrier -> targeted player)
+  
+  #16. Proximity to targeted player — start
+  # ===========================================================================
+  
+  proximity_targeted_start <- snapshot_start |>
+    filter(
+      side == "defense",
+      !is.na(player_targeted_x_start),
+      !is.na(player_targeted_y_start)
+    ) |>
+    mutate(
+      dist_to_targeted =
+        sqrt(
+          (player_x - player_targeted_x_start)^2 +
+            (player_y - player_targeted_y_start)^2
+        )
+    ) |>
+    group_by(match_id, event_id) |>
+    summarise(
+      nearest_def_dist_targeted =
+        suppressWarnings(min(dist_to_targeted, na.rm = TRUE)),
+      n_within_5m_targeted =
+        sum(dist_to_targeted <= 5, na.rm = TRUE),
+      .groups = "drop"
+    )
+  
+  
+  proximity_targeted_end <- snapshot_end |>
+    filter(
+      side == "defense",
+      !is.na(player_targeted_x_pass),
+      !is.na(player_targeted_y_pass)
+    ) |>
+    mutate(
+      dist_to_targeted =
+        sqrt(
+          (player_x - player_targeted_x_pass)^2 +
+            (player_y - player_targeted_y_pass)^2
+        )
+    ) |>
+    group_by(match_id, event_id) |>
+    summarise(
+      nearest_def_dist_targeted_end =
+        suppressWarnings(min(dist_to_targeted, na.rm = TRUE)),
+      n_within_5m_targeted_end =
+        sum(dist_to_targeted <= 5, na.rm = TRUE),
+      .groups = "drop"
+    )
+  
+  
+  
+  
+  
+  
+  
+  # 17. PASSING LANE FEATURES (carrier -> best option, carrier -> targeted player)
   # ===========================================================================
   
   CORRIDOR_WIDTH <- 2  # lane width
@@ -617,6 +680,9 @@ make_tracking_features <- function(events, tracking, match, option_features) {
     proximity_best_option_start,
     proximity_best_option_end,
     
+    proximity_targeted_start,
+    proximity_targeted_end,
+    
     passing_lane_features
     
   ) |>
@@ -645,6 +711,9 @@ make_tracking_features <- function(events, tracking, match, option_features) {
         second_nearest_def_dist_best_option_end - second_nearest_def_dist_best_option,
       best_option_n_within_5m_gain =
         n_within_5m_best_option_end - n_within_5m_best_option,
+      
+      nearest_def_dist_targeted_gain = nearest_def_dist_targeted_end - nearest_def_dist_targeted,
+      n_within_5m_targeted_gain = n_within_5m_targeted_end - n_within_5m_targeted,
       
       lane_obstruction_diff = min_dist_to_targeted_lane - min_dist_to_best_option_lane,
       lane_count_diff = n_defenders_in_targeted_lane - n_defenders_in_best_option_lane

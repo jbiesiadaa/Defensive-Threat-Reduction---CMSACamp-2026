@@ -1,5 +1,6 @@
 build_analysis_dataset <- function(events,
                                    option_features,
+                                   targeted_option_coords,
                                    obe_features,
                                    tracking_features) {
   
@@ -20,6 +21,11 @@ build_analysis_dataset <- function(events,
     ) |>
     
     left_join(
+      targeted_option_coords,
+      by = c("match_id", "targeted_passing_option_event_id")
+    ) |>
+    
+    left_join(
       obe_features,
       by = c(
         "match_id",
@@ -27,6 +33,8 @@ build_analysis_dataset <- function(events,
           "associated_player_possession_event_id"
       )
     ) |>
+    
+    
     
     left_join(
       tracking_features,
@@ -73,16 +81,34 @@ build_analysis_dataset <- function(events,
       # Spatial distances
       # ======================================================================
       
+      dist_carrier_to_goal_start =
+        sqrt(
+          (52.5 - x_start)^2 +
+            y_start^2
+        ),
+      
       dist_carrier_to_goal =
         sqrt(
           (52.5 - x_end)^2 +
             y_end^2
         ),
       
+      dist_best_option_to_goal_start =
+        sqrt(
+          (52.5 - best_option_x_start)^2 +
+            best_option_y_start^2
+        ),
+      
       dist_best_option_to_goal =
         sqrt(
           (52.5 - best_option_x)^2 +
             best_option_y^2
+        ),
+      
+      dist_targeted_to_goal_start =
+        sqrt(
+          (52.5 - player_targeted_x_start)^2 +
+            player_targeted_y_start^2
         ),
       
       dist_targeted_player_to_goal =
@@ -136,6 +162,63 @@ build_analysis_dataset <- function(events,
           best_option_x - best_option_x_start
         ) * 180 / pi,
       
+      
+      
+      # ======================================================================
+      # Carrier movement (start -> end of the possession/carry)
+      # ======================================================================
+      
+      carrier_move_forward = x_end - x_start,
+      carrier_move_lateral = y_end - y_start,
+      
+      carrier_move_dist =
+        sqrt(
+          carrier_move_forward^2 +
+            carrier_move_lateral^2
+        ),
+      
+      carrier_move_angle =
+        if_else(
+          carrier_move_dist > 1,
+          atan2(carrier_move_lateral, carrier_move_forward) * 180 / pi,
+          NA_real_
+        ),
+      
+      # ======================================================================
+      # Targeted player's run (start -> end of their option window)
+      # ======================================================================
+      
+      target_run_forward = player_targeted_x_pass - player_targeted_x_start,
+      target_run_lateral = player_targeted_y_pass - player_targeted_y_start,
+      
+      target_run_dist =
+        sqrt(
+          target_run_forward^2 +
+            target_run_lateral^2
+        ),
+      
+      target_run_angle =
+        if_else(
+          target_run_dist > 1,
+          atan2(target_run_lateral, target_run_forward) * 180 / pi,
+          NA_real_
+        ),
+      
+      
+      
+      
+      # ======================================================================
+      # Orientation toward goal at the decision moment (end position)
+      # ======================================================================
+      
+      angle_carrier_to_goal_end =
+        atan2(0 - y_end, 52.5 - x_end) * 180 / pi,
+      
+      angle_target_to_goal_end =
+        atan2(0 - player_targeted_y_pass, 52.5 - player_targeted_x_pass) * 180 / pi,
+      
+      angle_option_to_goal_end =
+        atan2(0 - best_option_y, 52.5 - best_option_x) * 180 / pi,
       
       
       # ======================================================================

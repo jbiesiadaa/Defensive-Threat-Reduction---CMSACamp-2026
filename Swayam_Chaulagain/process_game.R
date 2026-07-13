@@ -26,6 +26,9 @@ process_game <- function(event_file,
   option_features <-
     make_option_features(events)
   
+  targeted_option_coords <-
+    make_targeted_option_coords(events)
+  
   obe_features <-
     make_obe_features(events)
   
@@ -34,7 +37,8 @@ process_game <- function(event_file,
       events,
       tracking,
       match,
-      option_features
+      option_features,
+      targeted_option_coords
     )
   
   
@@ -46,6 +50,7 @@ process_game <- function(event_file,
     build_analysis_dataset(
       events,
       option_features,
+      targeted_option_coords,
       obe_features,
       tracking_features
     )

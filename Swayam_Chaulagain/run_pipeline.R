@@ -118,3 +118,17 @@ results <- purrr::pmap_dfr(
   
 )
 
+
+
+
+
+
+
+
+
+
+
+
+
+# checks
+
