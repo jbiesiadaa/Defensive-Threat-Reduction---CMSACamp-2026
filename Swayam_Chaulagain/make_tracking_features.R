@@ -76,18 +76,7 @@ make_tracking_features <- function(events, tracking, match, option_features, tar
       )
     )
   
-  
-  # 5. TEAM ATTACKING DIRECTION
-  
-  team_direction <- events |>
-    filter(team_id == attacking_team_id) |>
-    distinct(
-      team_id,
-      period,
-      attacking_side
-    )
-  
-  # 6. ATTACH BEST OPTION COORDINATES
+  # 5. ATTACH BEST OPTION COORDINATES
   
   events <- events |>
     left_join(
@@ -106,41 +95,14 @@ make_tracking_features <- function(events, tracking, match, option_features, tar
       )
     )
   
-  # 6b. ATTACH TARGETED OPTION COORDINATES
+  # 5b. ATTACH TARGETED OPTION COORDINATES
   events <- events |>
     left_join(
       targeted_option_coords,
       by = c("match_id", "targeted_passing_option_event_id")
     )
   
-  
-  # 7. STANDARDISE PLAYER COORDINATES
-  
-  players_std <- players |>
-    left_join(
-      team_direction,
-      by = c(
-        "team_id",
-        "period"
-      )
-    ) |>
-    mutate(
-      player_x = if_else(
-        attacking_side == "right_to_left",
-        -player_x,
-        player_x
-      ),
-      
-      player_y = if_else(
-        attacking_side == "right_to_left",
-        -player_y,
-        player_y
-      )
-    ) |>
-    select(
-      -attacking_side
-    )
-  
+ 
   
   
   # 8. CREATE EVENT SNAPSHOTS
@@ -148,32 +110,23 @@ make_tracking_features <- function(events, tracking, match, option_features, tar
   
   snapshot_start <- events |>
     select(
-      event_id,
-      match_id,
-      frame_start,
-      attacking_team_id,
-      x_start,
-      y_start,
-      best_option_x_start,
-      best_option_y_start,
+      event_id, match_id, frame_start, attacking_team_id, attacking_side,  # add attacking_side here
+      x_start, y_start,
+      best_option_x_start, best_option_y_start,
       player_targeted_x_start, player_targeted_y_start
     ) |>
     left_join(
-      players_std,
-      by = c(
-        "frame_start" = "frame"),
+      players,   # note: join to raw `players`, not `players_std`
+      by = c("frame_start" = "frame"),
       relationship = "many-to-many"
     ) |>
     mutate(
-      side = if_else(
-        team_id == attacking_team_id,
-        "attack",
-        "defense"
-      )
+      player_x = if_else(attacking_side == "right_to_left", -player_x, player_x),
+      player_y = if_else(attacking_side == "right_to_left", -player_y, player_y),
+      side = if_else(team_id == attacking_team_id, "attack", "defense")
     ) |>
-    filter(
-      position_acronym != "GK"
-    )
+    filter(position_acronym != "GK")
+  
   
   
   
@@ -183,6 +136,7 @@ make_tracking_features <- function(events, tracking, match, option_features, tar
       match_id,
       frame_end,
       attacking_team_id,
+      attacking_side,
       x_end,
       y_end,
       best_option_x,
@@ -191,12 +145,21 @@ make_tracking_features <- function(events, tracking, match, option_features, tar
       player_targeted_y_pass
     ) |>
     left_join(
-      players_std,
-      by = c(
-        "frame_end" = "frame"),
+      players,
+      by = c("frame_end" = "frame"),
       relationship = "many-to-many"
     ) |>
     mutate(
+      player_x = if_else(
+        attacking_side == "right_to_left",
+        -player_x,
+        player_x
+      ),
+      player_y = if_else(
+        attacking_side == "right_to_left",
+        -player_y,
+        player_y
+      ),
       side = if_else(
         team_id == attacking_team_id,
         "attack",
