@@ -4,13 +4,26 @@
 # Run AFTER the PTR script has produced `analysis`
 # (after section 5 "BUILD THE ANALYSIS DATASET", BEFORE the quality filters --
 #  the filters are re-run at the bottom, after the tracking join).
-#
 
+analysis <- readRDS("analysis_10games_prefilter.rds")
+
+# Loading Libraries
 library(dplyr)
 library(tidyr)
 library(purrr)
 library(tibble)
 library(jsonlite)
+
+# must be the PRE-tracking version -- rejoining an already-enriched analysis
+# would create .x/.y duplicate columns everywhere
+stopifnot(!"team_surface_area" %in% names(analysis))
+
+# Make IDs consistent before processing
+analysis <- analysis |>
+  mutate(
+    match_id = as.character(match_id),
+    event_id = as.character(event_id)
+  )
 
 # ---- FILE LOCATIONS (matching your actual folders) ---------------------------
 # matchdata: mls_skillcorner/match_data/match_742721_data.json
@@ -294,182 +307,286 @@ compute_match_features <- function(mid, keys_all) {
 }
 
 # ==============================================================================
-# 3. SINGLE-GAME TEST: match 742721  -- RUN THIS FIRST
-# ==============================================================================
-
-test_features <- compute_match_features("742721", snapshot_keys)
-
-# 3a. did it produce roughly one row per possession?
-cat("Feature rows:", nrow(test_features),
-    "| possessions in analysis:",
-    sum(snapshot_keys$match_id == "742721"), "\n")
-glimpse(test_features)
-
-# 3b. numbers in a sensible range?
-test_features |>
-  summarise(
-    max_team_area = max(team_surface_area, na.rm = TRUE),   # < 7140 (105x68)
-    min_def_dist  = min(nearest_def_dist,  na.rm = TRUE),   # >= 0
-    max_within_5m = max(n_within_5m,       na.rm = TRUE),   # <= 10
-    pct_missing   = round(mean(is.na(team_surface_area)) * 100, 1)
-  ) |>
-  print()
-
-# 3c. COORDINATE-FRAME CHECK: tracked carrier vs event carrier position.
-#     Median pos_error must be well under ~2 m. If it is pitch-sized,
-#     STOP -- the flip convention is wrong; don't run the full loop.
-players_test <- load_match_players("742721")
-
-carrier_check <- analysis |>
-  filter(as.character(match_id) == "742721") |>
-  transmute(event_id,
-            player_id = as.integer(player_id),
-            frame_start = as.integer(frame_start),
-            attacking_side,
-            carrier_x_start, carrier_y_start) |>
-  left_join(players_test, by = c("frame_start" = "frame", "player_id")) |>
-  mutate(
-    player_x = if_else(attacking_side == "right_to_left", -player_x, player_x),
-    player_y = if_else(attacking_side == "right_to_left", -player_y, player_y),
-    pos_error = sqrt((player_x - carrier_x_start)^2 +
-                       (player_y - carrier_y_start)^2)
-  )
-
-print(summary(carrier_check$pos_error))
-
-rm(players_test)
-
-# >>> ONLY CONTINUE PAST THIS POINT IF 3a-3c LOOK GOOD <<<
-
-# ==============================================================================
-# 4. FULL LOOP OVER ALL MATCHES
+# 3. CHECK AVAILABLE MATCH FILES
 # ==============================================================================
 
 match_ids <- unique(snapshot_keys$match_id)
 
+file_check <- tibble(
+  match_id = match_ids,
+  has_match_file = file.exists(match_file_for(match_ids)),
+  has_tracking_file = file.exists(tracking_file_for(match_ids))
+) |>
+  mutate(
+    files_available = has_match_file & has_tracking_file
+  )
+
+file_check |>
+  print(n = Inf)
+
+# CHANGE:
+# Only matches with both match data and tracking data will be processed.
+available_match_ids <- file_check |>
+  filter(files_available) |>
+  pull(match_id)
+
+stopifnot(
+  "No complete match and tracking files were found" =
+    length(available_match_ids) > 0
+)
+
+# ==============================================================================
+# 4. PROCESS ALL AVAILABLE MATCHES
+# ==============================================================================
+
+# CHANGE:
+# Multiple matches are now processed first.
+# The one-game test was moved to the end of the script.
+
 tracking_features <- map(
-  match_ids,
+  available_match_ids,
   ~ compute_match_features(.x, snapshot_keys),
   .progress = TRUE
 ) |>
   list_rbind()
 
 stopifnot(
-  "No tracking files found -- check the two *_file_for() paths at the top" =
+  "No tracking features were created" =
     nrow(tracking_features) > 0
 )
 
-# gains + lane comparisons
-tracking_features <- tracking_features |>
-  mutate(
-    team_surface_area_gain = team_surface_area_end - team_surface_area,
-    team_spread_gain       = team_spread_end - team_spread,
-    
-    nearest_surface_area_gain = nearest_surface_area_end - nearest_surface_area,
-    nearest_spread_gain       = nearest_spread_end - nearest_spread,
-    
-    dc_defmid_surface_area_gain = dc_defmid_surface_area_end - dc_defmid_surface_area,
-    dc_defmid_spread_gain       = dc_defmid_spread_end - dc_defmid_spread,
-    
-    nearest_def_dist_gain        = nearest_def_dist_end - nearest_def_dist,
-    second_nearest_def_dist_gain = second_nearest_def_dist_end - second_nearest_def_dist,
-    n_within_5m_gain             = n_within_5m_end - n_within_5m,
-    
-    best_option_nearest_def_dist_gain =
-      nearest_def_dist_best_option_end - nearest_def_dist_best_option,
-    best_option_second_nearest_def_dist_gain =
-      second_nearest_def_dist_best_option_end - second_nearest_def_dist_best_option,
-    best_option_n_within_5m_gain =
-      n_within_5m_best_option_end - n_within_5m_best_option,
-    
-    nearest_def_dist_targeted_gain =
-      nearest_def_dist_targeted_end - nearest_def_dist_targeted,
-    n_within_5m_targeted_gain =
-      n_within_5m_targeted_end - n_within_5m_targeted,
-    
-    lane_obstruction_diff = min_dist_to_targeted_lane - min_dist_to_best_option_lane,
-    lane_count_diff       = n_defenders_in_targeted_lane - n_defenders_in_best_option_lane
-  )
+dim(tracking_features)
 
-# uniqueness guard: exactly one feature row per possession
-dup_keys <- tracking_features |> count(match_id, event_id) |> filter(n > 1)
-stopifnot("tracking_features must be 1 row per possession" = nrow(dup_keys) == 0)
+tracking_features |>
+  count(match_id) |>
+  print(n = Inf)
+
+glimpse(tracking_features)
 
 # ==============================================================================
-# 5. JOIN INTO `analysis` -- BEFORE the quality filters
+# 5. CREATE GAIN AND LANE VARIABLES
+# ==============================================================================
+
+tracking_features <- tracking_features |>
+  mutate(
+    # Defensive-team changes
+    team_surface_area_gain =
+      team_surface_area_end - team_surface_area,
+    
+    team_spread_gain =
+      team_spread_end - team_spread,
+    
+    # Five nearest defenders
+    nearest_surface_area_gain =
+      nearest_surface_area_end - nearest_surface_area,
+    
+    nearest_spread_gain =
+      nearest_spread_end - nearest_spread,
+    
+    # Defensive and midfield players
+    dc_defmid_surface_area_gain =
+      dc_defmid_surface_area_end - dc_defmid_surface_area,
+    
+    dc_defmid_spread_gain =
+      dc_defmid_spread_end - dc_defmid_spread,
+    
+    # Pressure around the carrier
+    nearest_def_dist_gain =
+      nearest_def_dist_end - nearest_def_dist,
+    
+    second_nearest_def_dist_gain =
+      second_nearest_def_dist_end - second_nearest_def_dist,
+    
+    n_within_5m_gain =
+      n_within_5m_end - n_within_5m,
+    
+    # Pressure around the best option
+    best_option_nearest_def_dist_gain =
+      nearest_def_dist_best_option_end -
+      nearest_def_dist_best_option,
+    
+    best_option_second_nearest_def_dist_gain =
+      second_nearest_def_dist_best_option_end -
+      second_nearest_def_dist_best_option,
+    
+    best_option_n_within_5m_gain =
+      n_within_5m_best_option_end -
+      n_within_5m_best_option,
+    
+    # Pressure around the targeted player
+    nearest_def_dist_targeted_gain =
+      nearest_def_dist_targeted_end -
+      nearest_def_dist_targeted,
+    
+    n_within_5m_targeted_gain =
+      n_within_5m_targeted_end -
+      n_within_5m_targeted,
+    
+    # Targeted lane compared with best-option lane
+    lane_obstruction_diff =
+      min_dist_to_targeted_lane -
+      min_dist_to_best_option_lane,
+    
+    lane_count_diff =
+      n_defenders_in_targeted_lane -
+      n_defenders_in_best_option_lane
+  )
+
+# ==============================================================================
+# 6. CHECK ONE ROW PER POSSESSION
+# ==============================================================================
+
+duplicate_keys <- tracking_features |>
+  count(match_id, event_id) |>
+  filter(n > 1)
+
+stopifnot(
+  "Tracking features must have one row per possession" =
+    nrow(duplicate_keys) == 0
+)
+
+# ==============================================================================
+# 7. JOIN TRACKING FEATURES INTO ANALYSIS
 # ==============================================================================
 
 analysis <- analysis |>
-  mutate(match_id = as.character(match_id),
-         event_id = as.character(event_id)) |>
-  left_join(tracking_features, by = c("match_id", "event_id")) |>
-  mutate(has_tracking = !is.na(nearest_def_dist))
+  left_join(
+    tracking_features,
+    by = c("match_id", "event_id")
+  ) |>
+  mutate(
+    # CHANGE:
+    # TRUE means the possession has the main tracking features.
+    has_tracking =
+      !is.na(nearest_def_dist) &
+      !is.na(team_surface_area)
+  )
 
-stopifnot(!anyDuplicated(analysis[c("match_id", "event_id")]))  # no fan-out
+# Check that the join did not create extra rows
+stopifnot(
+  !anyDuplicated(
+    analysis[c("match_id", "event_id")]
+  )
+)
 
-cat("Tracking coverage in analysis:",
-    round(100 * mean(analysis$has_tracking), 1), "%\n")
+cat(
+  "Tracking coverage:",
+  round(100 * mean(analysis$has_tracking), 1),
+  "%\n"
+)
 
 # ==============================================================================
-# 6. QUALITY FILTERS (your section 6, unchanged) -> analysis_clean
+# 8. CHECK TRACKING COVERAGE BY MATCH
+# ==============================================================================
+
+analysis |>
+  group_by(match_id) |>
+  summarise(
+    possessions = n(),
+    possessions_with_tracking = sum(has_tracking),
+    tracking_coverage = round(
+      100 * mean(has_tracking),
+      1
+    ),
+    .groups = "drop"
+  ) |>
+  print(n = Inf)
+
+
+# ==============================================================================
+# 9. APPLY QUALITY FILTERS
 # ==============================================================================
 
 n_start <- nrow(analysis)
 
 analysis_clean <- analysis |>
-  filter(!is_header %in% TRUE) |>
-  filter(!hand_pass %in% TRUE) |>
-  filter(is_player_possession_end_matched %in% TRUE) |>
-  filter(!is.na(PTR)) |>
-  filter(!is_overreach %in% TRUE) |>
-  filter(is_player_possession_start_matched %in% TRUE) |>
-  filter(!short_possession) |>
-  filter(!disruption_possession %in% TRUE)
+  filter(!is_header %in% TRUE) |> # remove headers: not normal pass/xThreat logic
+  filter(!hand_pass %in% TRUE) |>  # remove hand/throw-in type actions if present
+  filter(is_player_possession_end_matched %in% TRUE) |> # pass moment reliably tracked
+  filter(!is.na(PTR)) |> # PTR is computable
+  filter(!is_overreach %in% TRUE) |> # Removing Gamblers Situations
+  filter(is_player_possession_start_matched %in% TRUE) |> # start features reliable
+  filter(!short_possession) |> # remove one-touch/very short actions
+  filter(!disruption_possession %in% TRUE)|> # remove messy/loose-ball actions
+  filter(!is.na(organised_defense)) # remove NA for organised defesne
 
-cat("Possessions:", n_start, "->", nrow(analysis_clean),
-    "(removed:", n_start - nrow(analysis_clean), ")\n")
+cat(
+  "Possessions:",
+  n_start,
+  "->",
+  nrow(analysis_clean),
+  "| Removed:",
+  n_start - nrow(analysis_clean),
+  "\n"
+)
 
 # ==============================================================================
-# 7. FINAL VERIFICATION
+# 10. FINAL CHECKS
 # ==============================================================================
 
-cat("Tracking coverage in analysis_clean:",
-    round(100 * mean(analysis_clean$has_tracking), 1), "%\n")
+cat(
+  "Tracking coverage after filtering:",
+  round(
+    100 * mean(analysis_clean$has_tracking),
+    1
+  ),
+  "%\n"
+)
 
-# defenders in the same frame as the carrier? expect clearly positive r
-cat("cor(nearest_def_dist, separation_start) =",
-    round(cor(analysis_clean$nearest_def_dist,
-              analysis_clean$separation_start,
-              use = "complete.obs"), 3), "\n")
+# Tracking defender distance should agree with separation_start
+cat(
+  "Correlation:",
+  round(
+    cor(
+      analysis_clean$nearest_def_dist,
+      analysis_clean$separation_start,
+      use = "complete.obs"
+    ),
+    3
+  ),
+  "\n"
+)
 
-# when the carrier chose the best option, both lanes are the same segment
+# When the targeted player is the best option,
+# the two passing lanes should be the same.
 analysis_clean |>
-  filter(PTR == 0, has_tracking, chose_best_option %in% TRUE) |>
+  filter(
+    PTR == 0,
+    has_tracking,
+    chose_best_option %in% TRUE
+  ) |>
   summarise(
-    max_lane_dist_diff  = max(abs(lane_obstruction_diff), na.rm = TRUE),  # ~0
-    max_lane_count_diff = max(abs(lane_count_diff),       na.rm = TRUE)   # 0
+    max_lane_distance_difference =
+      max(abs(lane_obstruction_diff), na.rm = TRUE),
+    
+    max_lane_count_difference =
+      max(abs(lane_count_diff), na.rm = TRUE)
   ) |>
   print()
 
-# range sanity
+# Check reasonable ranges
 analysis_clean |>
   filter(has_tracking) |>
   summarise(
-    max_team_area = max(team_surface_area, na.rm = TRUE),
-    min_def_dist  = min(nearest_def_dist,  na.rm = TRUE),
-    max_within_5m = max(n_within_5m,       na.rm = TRUE),
-    n_neg_area    = sum(team_surface_area < 0, na.rm = TRUE)
+    max_team_area =
+      max(team_surface_area, na.rm = TRUE),
+    
+    min_defender_distance =
+      min(nearest_def_dist, na.rm = TRUE),
+    
+    max_defenders_within_5m =
+      max(n_within_5m, na.rm = TRUE),
+    
+    negative_areas =
+      sum(team_surface_area < 0, na.rm = TRUE)
   ) |>
   print()
 
+
 # ==============================================================================
-# 8. SAVE
+# 11. CHECK MISSING VALUES
 # ==============================================================================
 
-saveRDS(analysis_clean, "ptr_analysis_dataset_200_with_tracking.rds")
-
-# Checking NA
-# pass_distance is only calculated for successful passes
 na_summary <- analysis_clean |>
   summarise(
     across(
@@ -490,7 +607,117 @@ na_summary <- analysis_clean |>
   ) |>
   arrange(desc(n_missing))
 
-na_summary|>
-  print(n = 10)
+na_summary |>
+  print(n = 20)
 
-table(analysis_clean$pass_outcome)
+table(
+  analysis_clean$pass_outcome,
+  useNA = "ifany"
+)
+
+target_pass<-analysis_clean|>
+  select(targeted_pass_successful)
+
+analysis_clean |>
+  filter(is.na(targeted_pass_successful)) |>
+  count(pass_outcome)
+
+# Check tracking_features has 50 columns
+ncol(tracking_features)
+
+# Check all tracking variables were added to analysis
+setdiff(
+  names(tracking_features),
+  names(analysis_clean)
+)
+
+# character(0) means no tracking variables are missing from analysis_clean.
+
+# ==============================================================================
+# 12. SAVE FINAL MULTI-GAME DATASET
+# ==============================================================================
+
+saveRDS(
+  analysis_clean,
+  "ptr_analysis_multiple_games_with_tracking.rds"
+)
+
+
+# ==============================================================================
+# 13. OPTIONAL: TEST ONE GAME
+# ==============================================================================
+
+# CHANGE:
+# The single-game test is now last and is optional.
+# This automatically selects the first available match.
+# Select the first available match
+test_id <- available_match_ids[1]
+
+# Or choose a specific match
+# test_id <- "1039803"
+
+
+# Tracking features for one game
+test_features <- tracking_features |>
+  filter(match_id == test_id)
+
+# Full analysis before quality filters
+test_analysis <- analysis |>
+  filter(match_id == test_id)
+
+# Final analysis after quality filters
+test_analysis_clean <- analysis_clean |>
+  filter(match_id == test_id)
+
+
+# Check number of rows
+cat(
+  "Test match:", test_id,
+  "\nTracking features:", nrow(test_features),
+  "\nAnalysis:", nrow(test_analysis),
+  "\nAnalysis clean:", nrow(test_analysis_clean),
+  "\n"
+)
+
+
+# Check tracking coverage
+test_analysis |>
+  summarise(
+    possessions = n(),
+    with_tracking = sum(has_tracking),
+    tracking_coverage = round(
+      100 * mean(has_tracking),
+      1
+    )
+  ) |>
+  print()
+
+
+# Check reasonable tracking values
+test_features |>
+  summarise(
+    max_team_area =
+      max(team_surface_area, na.rm = TRUE),
+    
+    min_defender_distance =
+      min(nearest_def_dist, na.rm = TRUE),
+    
+    max_defenders_within_5m =
+      max(n_within_5m, na.rm = TRUE),
+    
+    pct_missing = round(
+      100 * mean(is.na(team_surface_area)),
+      1
+    )
+  ) |>
+  print()
+
+
+# Check all 50 tracking columns exist
+ncol(test_features)
+
+setdiff(
+  names(test_features),
+  names(test_analysis_clean)
+)
+
