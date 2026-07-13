@@ -24,6 +24,7 @@ library(tidyverse)
 # Working with single game -> case study for the EDA 
 events    <- read.csv("mls_skillcorner/dynamic_events/match_742721_events.csv")
 
+events <- read.csv("mls_skillcorner/dynamic_events/match_1039803_events.csv")
 # ------------------------------------------------------------------------------
 # Working with multiple games
 
@@ -36,13 +37,13 @@ files <- list.files(
   full.names = TRUE
 )
 
-# keep only first 200 games
-files_200 <- files[1:50]
+# keep only first 10 games
+files_10 <- files[1:10]
 
 # read and combine 200 games
-dynamic_200 <- do.call(
+dynamic_10 <- do.call(
   rbind,
-  lapply(files_200, function(file) {
+  lapply(files_10, function(file) {
     data <- read.csv(file)
     data$source_file <- file
     data$game_id <- gsub("match_|_events.csv", "", basename(file))
@@ -52,7 +53,7 @@ dynamic_200 <- do.call(
 
 
 # Writing it as events
-events <- dynamic_200
+events <- dynamic_10
 
 # Helper: SkillCorner booleans arrive as strings ("True"/"False") or logicals -> transforming them to the logical values
 to_bool <- function(x) {
@@ -433,7 +434,7 @@ analysis <- possessions |>
   # Applies only to the targeted pass because the best option was not attempted
   targeted_pass_successful = case_when(
     pass_outcome == "successful" ~ TRUE,
-    pass_outcome == "unsuccessful" ~ FALSE,
+    pass_outcome %in% c("unsuccessful", "offside") ~ FALSE,
     TRUE ~ NA),
   
   ## MOVEMENT (start -> end), same shape for all three players --------------
@@ -600,7 +601,10 @@ analysis <- possessions |>
   )
 )
 
-# 6. QUALITY FILTERS -----------------------------------------------------------
+# 6. Saving For Future Work Pre Filter ----------------------------------------
+saveRDS(analysis, "analysis_10games_prefilter.rds")
+
+# 7. QUALITY FILTERS -----------------------------------------------------------
 
 # Clean dataset for validation and EDA
 n_start <- nrow(analysis)
@@ -619,7 +623,7 @@ analysis_clean <- analysis |>
 cat("Possessions:", n_start, "->", nrow(analysis_clean),
     "(removed:", n_start - nrow(analysis_clean), ")\n") # How many was removed by filtering
 
-# 7. Verification --------------------------------------------------------------
+# 8. Verification --------------------------------------------------------------
 
 # Checking Logic of coordinates
 # they should match
@@ -638,8 +642,6 @@ analysis_clean |>
       player_targeted_y_end == best_option_y_end
   ) |>
   count(coordinates_exact_match)
-
-
 
 
 # they should not match
@@ -667,10 +669,9 @@ events|>
   filter(event_id == "8_172")|>
   select(player_targeted_angle_to_goal_start, player_targeted_angle_to_goal_end)
 
-# 8. Saving for future work ----------------------------------------------------
+# 9. Saving for future work ----------------------------------------------------
 
 saveRDS(analysis_clean, "ptr_analysis_dataset_200.rds")
-saveRDS(analysis_model,  "ptr_model_dataset_200.rds")
 
 # Tracking of changes 
 # 07/10/2026
@@ -695,10 +696,34 @@ saveRDS(analysis_model,  "ptr_model_dataset_200.rds")
 # When we have a situation when two players have max threat the same (chosen player and other option) 
 # let's say 0.3 the algorithm will chose the chosen player (targeted) first
 # added calculations of distances + geometry 
-
-
-events |>
-  filter(team_id == attacking_team_id) |>
-  distinct(team_id, period, attacking_side) |>
-  count(team_id, period) |>
-  filter(n > 1)
+# PASS DISTANCE:
+# - SkillCorner pass_distance was available only for successful passes.
+# - Added coordinate-based pass distances so both successful and unsuccessful
+#   passes can be retained.
+# - Calculated distance from the carrier to:
+#     1. The targeted receiver
+#     2. The best realistic passing option
+# - Added start distance, end distance, and distance change.
+# - Added the difference between the targeted-pass distance and the
+#   best-option distance.
+#
+# PASS OUTCOME:
+# - Added targeted_pass_successful.
+# - This outcome applies only to the targeted pass because the best option
+#   was not attempted.
+# - Pass outcome should be used for validation or separate analysis, not as
+#   a predictor of PTR.
+#
+# MOVEMENT:
+# - Added stationary indicators for the carrier, targeted receiver, and
+#   best passing option.
+# - A player is classified as stationary when movement distance is <= 1 metre.
+# - Previously, stationary players had NA for movement angle.
+# - Stationary players now receive an angle of 0.
+# - The stationary indicator should be used together with the angle variable.
+#
+# VARIABLE NAMES:
+# - option_run_forward -> best_option_run_forward
+# - option_run_lateral -> best_option_run_lateral
+# - option_run_dist    -> best_option_run_dist
+# - option_run_angle   -> best_option_run_angle
