@@ -5,12 +5,6 @@
 # Julia Biesiada Version -> Checking Swayam work and then adding new extensions 
 
 library(tidyverse)
-library(jsonlite)
-library(gt)
-library(dplyr)
-library(sportyR)
-
-
 
 
 # Suppression creates the largest average passing threat reduction, while forced backward actions most often make attackers choose below their best available option.
@@ -381,11 +375,13 @@ analysis <- possessions |>
             relationship = "many-to-one") |>
   
 
-# GEOMETRY -- symmetric for all three actors, at BOTH moments
-#      Goal center = (52.5, 0) in the standardized frame.
-mutate(
-  ## DISTANCE TO GOAL --------------------------------------------------------
+  # GEOMETRY -- symmetric for all three actors, at BOTH moments
+  #      Goal center = (52.5, 0) in the standardized frame.
+  mutate(
+  
+  ## DISTANCE TO GOAL 
   dist_carrier_to_goal_start = sqrt((52.5 - carrier_x_start)^2 + carrier_y_start^2),
+  
   dist_carrier_to_goal_end   = sqrt((52.5 - carrier_x_end)^2   + carrier_y_end^2),
   
   dist_target_to_goal_start  = sqrt((52.5 - player_targeted_x_start)^2 +
@@ -393,65 +389,96 @@ mutate(
   dist_target_to_goal_end    = sqrt((52.5 - player_targeted_x_end)^2 +
                                       player_targeted_y_end^2),
   
-  dist_option_to_goal_start  = sqrt((52.5 - best_option_x_start)^2 +
+  dist_best_to_goal_start  = sqrt((52.5 - best_option_x_start)^2 +
                                       best_option_y_start^2),
-  dist_option_to_goal_end    = sqrt((52.5 - best_option_x_end)^2 +
+  dist_best_to_goal_end    = sqrt((52.5 - best_option_x_end)^2 +
                                       best_option_y_end^2),
   
-  ## DISTANCE BETWEEN Players -------------------------------------------------
-  # carrier <-> targeted receiver
-  dist_carrier_to_target_start = sqrt((carrier_x_start - player_targeted_x_start)^2 +
-                                        (carrier_y_start - player_targeted_y_start)^2),
-  dist_carrier_to_target_end   = sqrt((carrier_x_end - player_targeted_x_end)^2 +
-                                        (carrier_y_end - player_targeted_y_end)^2),
+  # PASS DISTANCES 
   
-  # carrier <-> best option (did the option drift toward/away from the carrier?)
-  dist_carrier_to_option_start = sqrt((carrier_x_start - best_option_x_start)^2 +
-                                        (carrier_y_start - best_option_y_start)^2),
-  dist_carrier_to_option_end   = sqrt((carrier_x_end - best_option_x_end)^2 +
-                                        (carrier_y_end - best_option_y_end)^2),
+  # Distance from carrier to chosen target
+  targeted_pass_distance_start = sqrt(
+    (player_targeted_x_start - carrier_x_start)^2 +
+      (player_targeted_y_start - carrier_y_start)^2),
   
-  # targeted <-> best option (0 at both moments when he chose the best)
-  dist_target_to_option_start  = sqrt((player_targeted_x_start - best_option_x_start)^2 +
-                                        (player_targeted_y_start - best_option_y_start)^2),
-  dist_target_to_option_end    = sqrt((player_targeted_x_end - best_option_x_end)^2 +
-                                        (player_targeted_y_end - best_option_y_end)^2),
+  targeted_pass_distance_end = sqrt(
+    (player_targeted_x_end - carrier_x_end)^2 +
+      (player_targeted_y_end - carrier_y_end)^2),
+  
+  targeted_pass_distance_gain =
+    targeted_pass_distance_end -
+    targeted_pass_distance_start,
+  
+  
+  # Distance from carrier to best realistic option
+  best_option_pass_distance_start = sqrt(
+    (best_option_x_start - carrier_x_start)^2 +
+      (best_option_y_start - carrier_y_start)^2),
+  
+  best_option_pass_distance_end = sqrt(
+    (best_option_x_end - carrier_x_end)^2 +
+      (best_option_y_end - carrier_y_end)^2),
+  
+  best_option_pass_distance_gain =
+    best_option_pass_distance_end -
+    best_option_pass_distance_start,
+  
+  
+  # Positive = chosen target was farther than best option
+  targeted_vs_best_distance_start =
+    targeted_pass_distance_start -
+    best_option_pass_distance_start,
+  
+  # PASS OUTCOME
+  # Applies only to the targeted pass because the best option was not attempted
+  targeted_pass_successful = case_when(
+    pass_outcome == "successful" ~ TRUE,
+    pass_outcome == "unsuccessful" ~ FALSE,
+    TRUE ~ NA),
   
   ## MOVEMENT (start -> end), same shape for all three players --------------
   # carrier (= the carry; possession window)
   carrier_move_forward = carrier_x_end - carrier_x_start,        # + = to goal
   carrier_move_lateral = carrier_y_end - carrier_y_start,        # signed
   carrier_move_dist    = sqrt(carrier_move_forward^2 + carrier_move_lateral^2),
-  carrier_move_angle   = ifelse(carrier_move_dist > 1,
+  carrier_stationary = carrier_move_dist <= 1,
+  carrier_move_angle   = ifelse(carrier_stationary, 0,
                                 atan2(carrier_move_lateral,
-                                      carrier_move_forward) * 180 / pi,
-                                NA_real_),
+                                      carrier_move_forward) * 180 / pi),
   
   # targeted receiver's run (option window)
   target_run_forward = player_targeted_x_end - player_targeted_x_start,
   target_run_lateral = player_targeted_y_end - player_targeted_y_start,
   target_run_dist    = sqrt(target_run_forward^2 + target_run_lateral^2),
-  target_run_angle   = ifelse(target_run_dist > 1,
+  target_stationary  = target_run_dist <= 1,
+  target_run_angle   = ifelse(target_stationary,0,
                               atan2(target_run_lateral,
-                                    target_run_forward) * 180 / pi,
-                              NA_real_),
+                                    target_run_forward) * 180 / pi),
   
   # best option's run (option window)
-  option_run_forward = best_option_x_end - best_option_x_start,
-  option_run_lateral = best_option_y_end - best_option_y_start,
-  option_run_dist    = sqrt(option_run_forward^2 + option_run_lateral^2),
-  option_run_angle   = ifelse(option_run_dist > 1,
-                              atan2(option_run_lateral,
-                                    option_run_forward) * 180 / pi,
-                              NA_real_),
+  best_option_run_forward = best_option_x_end - best_option_x_start,
+  best_option_run_lateral = best_option_y_end - best_option_y_start,
+  best_option_run_dist    = sqrt(best_option_run_forward^2 + best_option_run_lateral^2),
+  best_option_stationary  = best_option_run_dist <= 1 ,
+  best_option_run_angle   = ifelse(best_option_stationary,0,
+                              atan2(best_option_run_lateral,
+                                    best_option_run_forward) * 180 / pi),
+  
   # angle from each player to goal center at end (0 = straight at goal, ±90 = level with it)
+  angle_carrier_to_goal_start = atan2(0 - carrier_y_start,
+                                    52.5 - carrier_x_start) * 180 / pi,
   angle_carrier_to_goal_end = atan2(0 - carrier_y_end,
                                     52.5 - carrier_x_end) * 180 / pi,
+  
+  angle_target_to_goal_start = atan2(0 - player_targeted_y_start,
+                                    52.5 - player_targeted_x_start) * 180 / pi,
   angle_target_to_goal_end  = atan2(0 - player_targeted_y_end,
                                     52.5 - player_targeted_x_end) * 180 / pi,
+  
+  angle_option_to_goal_start  = atan2(0 - best_option_y_start,
+                                    52.5 - best_option_x_start) * 180 / pi,
   angle_option_to_goal_end  = atan2(0 - best_option_y_end,
                                     52.5 - best_option_x_end) * 180 / pi,
-
   # DEFENSIVE ENGAGEMENT -----
   n_engagements = replace_na(n_engagements, 0L),
   engaged       = n_engagements > 0,
@@ -668,3 +695,10 @@ saveRDS(analysis_model,  "ptr_model_dataset_200.rds")
 # When we have a situation when two players have max threat the same (chosen player and other option) 
 # let's say 0.3 the algorithm will chose the chosen player (targeted) first
 # added calculations of distances + geometry 
+
+
+events |>
+  filter(team_id == attacking_team_id) |>
+  distinct(team_id, period, attacking_side) |>
+  count(team_id, period) |>
+  filter(n > 1)
