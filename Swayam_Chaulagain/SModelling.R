@@ -24,7 +24,7 @@ exclude_predictors <- c(
   "PTR_status",
   "chose_best_option",
   "player_targeted_xthreat",
-  "max_xthreat_realistic",
+  "max_xthreat_all",
   "best_was_tied",
   "is_overreach",
   "no_realistic_option",
@@ -284,7 +284,7 @@ predictor_cols <- model_data_start_gain |>
 corr_matrix <- correlate(predictor_cols, use  = "pairwise.complete.obs")
 
 
-View(corr_matrix |> stretch() |> filter(abs(r) > 0.6, x != y) |> arrange(desc(abs(r))))
+View(corr_matrix |> stretch() |> filter(abs(r) > 0.5, x != y) |> arrange(desc(abs(r))))
 
 colnames(model_data_end)
 
