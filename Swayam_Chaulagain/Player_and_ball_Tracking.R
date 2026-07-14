@@ -5,7 +5,6 @@
 # Run AFTER the PTR script has produced `analysis`
 # (after section 5 "BUILD THE ANALYSIS DATASET", BEFORE the quality filters --
 #  the filters are re-run at the bottom, after the tracking join).
-
 analysis <- readRDS("analysis_10games_prefilter.rds")
 
 # Loading Libraries

@@ -24,7 +24,7 @@ exclude_predictors <- c(
   "PTR_status",
   "chose_best_option",
   "player_targeted_xthreat",
-  "max_xthreat_all",
+  "max_xthreat_realistic",
   "best_was_tied",
   "is_overreach",
   "no_realistic_option",
@@ -264,19 +264,27 @@ model_data_end <- model_data |>
   )))
 
 
+# start_gain 
+
+model_data_start_gain <- model_data |>
+  select(-any_of(c(
+    end_versions
+  )))
+
+
 
 # Exclude Correlations 
 # checking their coorelation
 
 library(corrr)
 
-predictor_cols <- model_data_end |> 
+predictor_cols <- model_data_start_gain |> 
   select(where(is.numeric), -matches("PTR|event_id|frame|player_id|team_id")) 
 
 corr_matrix <- correlate(predictor_cols, use  = "pairwise.complete.obs")
 
 
-View(corr_matrix |> stretch() |> filter(abs(r) > 0.7, x != y) |> arrange(desc(abs(r))))
+View(corr_matrix |> stretch() |> filter(abs(r) > 0.6, x != y) |> arrange(desc(abs(r))))
 
 colnames(model_data_end)
 
@@ -309,12 +317,13 @@ correlations_end <- c(
   "delta_to_last_defensive_line_start",
   
   # highly related defender metric
+  "second_nearest_def_dist_end",
   "second_nearest_def_dist_best_option_end",
   
   # derived from carrier position
   "last_defensive_line_height_start",
   
-  "engagement_type_group",
+  "engagement_type_group",  # related to PTR
   
   # coorelated with dc_mid_spread so will just keep defensivemidfielders
   "team_spread_end" ,
@@ -333,19 +342,68 @@ model_data_end <- model_data_end |>
 
 colnames(model_data_end)
 
-# start + gain
-model_data_start_gain <-model_data|>
-  select(-any_of(c(end_versions, correlations_end
-  )))
 
 
 
 
 
+correlations_start_gain <- c(
+  # duplicate defender distance
+  "separation_start",
+  "separation_gain",
+  
+  # redundant with x/y coordinates
+  "dist_carrier_to_goal_start",
+  "angle_carrier_to_goal_start",
+  
+  "dist_target_to_goal_start",
+  "angle_target_to_goal_start",
+  
+  "dist_best_to_goal_start",
+  "angle_option_to_goal_start",
+  
+  # choose spread OR surface area
+  "team_surface_area",
+  "team_surface_area_gain",
+  "dc_defmid_surface_area",
+  "dc_defmid_surface_area_gain",
+  "nearest_surface_area",
+  "nearest_surface_area_gain",
+  "team_spread",
+  "team_spread_gain",
+  
+  
+  # redundant counts
+  "n_passing_options",
+  
+  # derived geometry
+  "delta_to_last_defensive_line_start",
+  
+  # highly related defender metric
+  "second_nearest_def_dist_start",
+  "second_nearest_def_dist",
+  "second_nearest_def_dist_best_option",
+  
+  # derived from carrier position
+  "last_defensive_line_height_start",
+  
+  "engagement_type_group", # related to PTR
+  
+  # would be True if n_engaments >0 
+  "engaged",
+  
+  "lane_obstruction_diff", # basically calculated from min_dist_to_targeted_lane - min_dist_to_best_option_lane
+  
+  "lane_count_diff"
+)
 
 
 
+# Remove variables
+model_data_start_gain <- model_data_start_gain |>
+  select(-any_of(correlations_start_gain))
 
+colnames(model_data_start_gain)
 
 
 
@@ -353,15 +411,6 @@ model_data_start_gain <-model_data|>
 
 model_data_end |>
   select(where(is.numeric)) |>
-  colnames()
-
-
-model_data_end |>
-  select(where(is.logical)) |>
-  colnames()
-
-model_data_end |>
-  select(where(is.character)) |>
   colnames()
 
 
@@ -400,7 +449,8 @@ t1_vars <- c(
   "n_passing_options_dangerous_not_difficult",
   "n_passing_options_dangerous_difficult",
   "n_passing_options_line_break",
-  "n_passing_options_ahead"
+  "n_passing_options_ahead", 
+  "carrier_position"
 )
 
 # ==========================================================
@@ -442,6 +492,76 @@ fit_t1 <- glmmTMB(
 summary(fit_t1)
 AIC(fit_t1)
 BIC(fit_t1)
+
+
+
+# Checking predicted vs observed PTR 
+
+model_data_end_cl$predicted <- predict(fit_t1,type="response")
+
+ggplot(model_data_end_cl,
+       aes(x=predicted, y=PTR))+
+  geom_point(alpha=0.2)+
+  geom_smooth()
+
+
+
+# Cross validation
+
+library(rsample)
+
+set.seed(123)
+folds <- group_vfold_cv(model_data_end_cl, group = match_id, v = 5)
+
+# Create an empty vector to store our errors
+rmse_vector <- numeric(5)
+
+# Loop through each of the 5 folds step-by-step
+for (i in 1:5) {
+  
+  # 1. Split the data simply
+  train_data <- analysis(folds$splits[[i]])
+  test_data  <- assessment(folds$splits[[i]])
+  
+  # 2. Fit the model
+  model <- glmmTMB(
+    formula = f_t1,
+    data = train_data,
+    family = beta_family(),
+    ziformula = ~1
+  )
+  
+  # 3. Predict on unseen test data
+  preds <- predict(
+    model, 
+    newdata = test_data, 
+    type = "response", 
+    allow.new.levels = TRUE  # Handles new players in the test set safely
+  )
+  
+  # 4. Calculate RMSE and save it
+  rmse_vector[i] <- sqrt(mean((test_data$PTR - preds)^2, na.rm = TRUE))
+}
+
+# Print the final results
+print(rmse_vector)
+mean(rmse_vector)
+
+
+
+# ..........................................................
+
+#  print(rmse_vector)
+# 0.010379349 0.011313441 0.007328700 0.006847168 0.005753726
+# mean(rmse_vector)  0.008324477
+
+# ..........................................................
+
+
+
+
+
+
 
 
 
