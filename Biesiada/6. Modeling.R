@@ -271,9 +271,34 @@ model_data_end <- model_data |>
 
 colnames(model_data_end)
 
+# Exclude Correlations 
+
+correlations_end <- c(
+  "separation_end",
+  "dist_carrier_to_goal_end",
+  "dist_target_to_goal_end",
+  "dist_best_to_goal_end",
+  "team_surface_area_end",
+  "angle_target_to_goal_end",
+  "angle_option_to_goal_end",
+  "angle_carrier_to_goal_end",
+  "dc_defmid_surface_area_end",
+  "nearest_surface_area_end",
+  "n_passing_options",
+  "delta_to_last_defensive_line_start",
+  "second_nearest_def_dist_best_option_end",
+  "last_defensive_line_height_start",
+  "engagement_type_group"
+)
+
+# Remove variables
+model_data_end <- model_data_end |>
+  select(-any_of(correlations_end))
+
+           
 # start + gain
 model_data_start_gain <-model_data|>
-  select(-any_of(c(end_versions
+  select(-any_of(c(end_versions, correlations_end
   )))
 
 
