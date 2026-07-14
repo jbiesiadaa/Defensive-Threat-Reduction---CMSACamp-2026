@@ -1,4 +1,4 @@
-# Start modeling ZIBR (Zero-Inflated Beta regression model with Random effects)
+# Start modeling glmmTMB 
 
 library(tidyverse)
 library(glmmTMB)
@@ -263,9 +263,25 @@ model_data_end <- model_data |>
     gain_versions
   )))
 
-colnames(model_data_end)
+
 
 # Exclude Correlations 
+# checking their coorelation
+
+library(corrr)
+
+predictor_cols <- model_data_end |> 
+  select(where(is.numeric), -matches("PTR|event_id|frame|player_id|team_id")) 
+
+corr_matrix <- correlate(predictor_cols, use  = "pairwise.complete.obs")
+
+
+View(corr_matrix |> stretch() |> filter(abs(r) > 0.7, x != y) |> arrange(desc(abs(r))))
+
+colnames(model_data_end)
+
+
+
 
 correlations_end <- c(
   # duplicate defender distance
@@ -335,39 +351,97 @@ model_data_start_gain <-model_data|>
 
 #Looking at numeric columns
 
-ptr_analysis_multiple_games_with_tracking |>
+model_data_end |>
   select(where(is.numeric)) |>
+  colnames()
+
+
+model_data_end |>
+  select(where(is.logical)) |>
+  colnames()
+
+model_data_end |>
+  select(where(is.character)) |>
   colnames()
 
 
 
 
-# checking their coorelation
-
-library(corrr)
-
-predictor_cols <- model_data_end |> 
-  select(where(is.numeric), -matches("PTR|event_id|frame|player_id|team_id")) 
-
-corr_matrix <- correlate(predictor_cols, use  = "pairwise.complete.obs")
 
 
-View(corr_matrix |> stretch() |> filter(abs(r) > 0.7, x != y) |> arrange(desc(abs(r))))
+#.  .....Tier 1 model..............
 
+ 
 
+library(tidyverse)
+library(glmmTMB)
 
-colnames(model_data_end)
+# ==========================================================
+# Prepare data
+# ==========================================================
+model_data_end_cl <- model_data_end |>
+  mutate(
+    player_id = factor(player_id),
+    match_id  = factor(match_id),
+    across(where(is.character), factor)
+  )
 
+# ==========================================================
+# Tier 1 predictors
+# ==========================================================
+t1_vars <- c(
+  "duration",
+  "channel_start",
+  "third_start",
+  "game_state",
+  "organised_defense",
+  "inside_defensive_shape_start",
+  "nearest_def_dist",
+  "n_passing_options_dangerous_not_difficult",
+  "n_passing_options_dangerous_difficult",
+  "n_passing_options_line_break",
+  "n_passing_options_ahead"
+)
 
+# ==========================================================
+# Position helper
+# ==========================================================
+pos_terms <- function(x, y) {
+  paste(
+    x,
+    y,
+    paste0("I(", x, "^2)"),
+    paste0("I(", y, "^2)"),
+    paste0(x, ":", y),
+    sep = " + "
+  )
+}
 
+# ==========================================================
+# Build formula
+# ==========================================================
+rhs <- paste(
+  pos_terms("carrier_x_end", "carrier_y_end"),
+  paste(t1_vars, collapse = " + "),
+  "(1 | player_id)",
+  sep = " + "
+)
 
+f_t1 <- as.formula(paste("PTR ~", rhs))
 
+# ==========================================================
+# Fit model
+# ==========================================================
+fit_t1 <- glmmTMB(
+  formula = f_t1,                       # Beta component
+  data = model_data_end_cl,
+  family = beta_family(),
+  ziformula = ~1                       # Zero component.  1 means - Only include an intercept. Later add defensive features
+)
 
-
-
-
-
-
+summary(fit_t1)
+AIC(fit_t1)
+BIC(fit_t1)
 
 
 
