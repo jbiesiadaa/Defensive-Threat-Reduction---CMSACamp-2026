@@ -476,7 +476,71 @@ cat(
 )
 
 # ==============================================================================
-# 8. CHECK TRACKING COVERAGE BY MATCH
+# 8. ADD PLAYER POSITIONS FROM MATCH LINEUP
+# ==============================================================================
+
+# CHANGE:
+# Add the registered lineup position for the carrier,
+# targeted player, and best passing option.
+
+position_lookup <- map(
+  unique(analysis$match_id),
+  function(mid) {
+    
+    mf <- match_file_for(mid)
+    
+    if (!file.exists(mf)) return(NULL)
+    
+    fromJSON(mf)$players |>
+      as_tibble() |>
+      unnest_wider(player_role, names_sep = "_") |>
+      transmute(
+        match_id = as.character(mid),
+        player_id = as.integer(id),
+        position = player_role_name
+      )
+  }
+) |>
+  list_rbind() |>
+  distinct(match_id, player_id, .keep_all = TRUE)
+
+
+analysis <- analysis |>
+  mutate(
+    player_id = as.integer(player_id),
+    player_targeted_id = as.integer(player_targeted_id),
+    best_option_player_id = as.integer(best_option_player_id)
+  ) |>
+  
+  # Carrier position
+  left_join(
+    position_lookup |>
+      rename(carrier_position = position),
+    by = c("match_id", "player_id")
+  ) |>
+  
+  # Targeted-player position
+  left_join(
+    position_lookup |>
+      rename(
+        player_targeted_id = player_id,
+        targeted_position = position
+      ),
+    by = c("match_id", "player_targeted_id")
+  ) |>
+  
+  # Best-option position
+  left_join(
+    position_lookup |>
+      rename(
+        best_option_player_id = player_id,
+        best_option_position = position
+      ),
+    by = c("match_id", "best_option_player_id")
+  )
+
+# ==============================================================================
+# 9. CHECK TRACKING COVERAGE BY MATCH
 # ==============================================================================
 
 analysis |>
@@ -494,7 +558,7 @@ analysis |>
 
 
 # ==============================================================================
-# 9. APPLY QUALITY FILTERS
+# 10. APPLY QUALITY FILTERS
 # ==============================================================================
 
 n_start <- nrow(analysis)
@@ -521,7 +585,7 @@ cat(
 )
 
 # ==============================================================================
-# 10. FINAL CHECKS
+# 11. FINAL CHECKS
 # ==============================================================================
 
 cat(
@@ -584,7 +648,7 @@ analysis_clean |>
 
 
 # ==============================================================================
-# 11. CHECK MISSING VALUES
+# 12. CHECK MISSING VALUES
 # ==============================================================================
 
 na_summary <- analysis_clean |>
@@ -634,7 +698,7 @@ setdiff(
 # character(0) means no tracking variables are missing from analysis_clean.
 
 # ==============================================================================
-# 12. SAVE FINAL MULTI-GAME DATASET
+# 13. SAVE FINAL MULTI-GAME DATASET
 # ==============================================================================
 
 saveRDS(
@@ -644,7 +708,7 @@ saveRDS(
 
 
 # ==============================================================================
-# 13. OPTIONAL: TEST ONE GAME
+# 14. OPTIONAL: TEST ONE GAME
 # ==============================================================================
 
 # CHANGE:
