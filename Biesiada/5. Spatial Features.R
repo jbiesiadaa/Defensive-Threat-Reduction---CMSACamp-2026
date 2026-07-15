@@ -5,7 +5,7 @@
 # (after section 5 "BUILD THE ANALYSIS DATASET", BEFORE the quality filters --
 #  the filters are re-run at the bottom, after the tracking join).
 
-analysis <- readRDS("analysis_10games_prefilter.rds")
+analysis <- readRDS("analysis_502games_prefilter.rds")
 
 # Loading Libraries
 library(dplyr)
@@ -703,7 +703,7 @@ setdiff(
 
 saveRDS(
   analysis_clean,
-  "ptr_analysis_multiple_games_with_tracking.rds"
+  "ptr_analysis_clean_502games.rds"
 )
 
 
