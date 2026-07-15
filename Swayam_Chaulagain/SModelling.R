@@ -3,7 +3,7 @@
 library(tidyverse)
 library(glmmTMB)
 
-analysis_clean <- readRDS("ptr_analysis_multiple_games_with_tracking.rds")
+analysis_clean <- readRDS("ptr_analysis_clean_502games.rds")
 
 
 
@@ -427,16 +427,23 @@ library(glmmTMB)
 
 # ==========================================================
 # Prepare data
+library(tidyverse)
+library(glmmTMB)
+library(parallel)
+
+# ==========================================================
+# STEP 1: Prepare data
 # ==========================================================
 model_data_end_cl <- model_data_end |>
   mutate(
     player_id = factor(player_id),
+    team_id   = factor(team_id),    # Factor level kept for fixed effect control
     match_id  = factor(match_id),
     across(where(is.character), factor)
   )
 
 # ==========================================================
-# Tier 1 predictors
+# STEP 2: Tier 1 predictors
 # ==========================================================
 t1_vars <- c(
   "duration",
@@ -454,7 +461,7 @@ t1_vars <- c(
 )
 
 # ==========================================================
-# Position helper
+# STEP 3: Position helper
 # ==========================================================
 pos_terms <- function(x, y) {
   paste(
@@ -468,62 +475,95 @@ pos_terms <- function(x, y) {
 }
 
 # ==========================================================
-# Build formula
+# STEP 4: Build formula (Optimized Random Effects)
 # ==========================================================
+# We move team_id to a fixed effect because having only 29 teams 
+# with 243k rows was causing optimizer instability (NaN standard errors).
 rhs <- paste(
   pos_terms("carrier_x_end", "carrier_y_end"),
   paste(t1_vars, collapse = " + "),
-  "(1 | player_id)",
+  "team_id",             # Fixed effect: Controls for team style/bias safely
+  "(1 | player_id)",     # Random effect: Grouped by the 815 individual players
   sep = " + "
 )
 
 f_t1 <- as.formula(paste("PTR ~", rhs))
 
 # ==========================================================
-# Fit model
+# STEP 5: Fit model with Parallel CPU Processing
 # ==========================================================
+# Autodetect your CPU cores to drastically speed up the optimizer's math
+num_cores <- min(parallel::detectCores() - 1, 4)
+cat("Fitting stabilized Tier 1 model using", num_cores, "CPU cores...\n")
+
 fit_t1 <- glmmTMB(
-  formula = f_t1,                       # Beta component
+  formula = f_t1,
   data = model_data_end_cl,
   family = beta_family(),
-  ziformula = ~1                       # Zero component.  1 means - Only include an intercept. Later add defensive features
+  ziformula = ~1,
+  control = glmmTMBControl(
+    parallel = num_cores #  cuts down the 25-30 minute wait time
+  )
 )
 
+# ==========================================================
+# STEP 6: Print stabilized diagnostics
+# ==========================================================
 summary(fit_t1)
-AIC(fit_t1)
-BIC(fit_t1)
+cat("AIC:", AIC(fit_t1), "\n")
+cat("BIC:", BIC(fit_t1), "\n")
 
 
 
-# Checking predicted vs observed PTR 
 
-model_data_end_cl$predicted <- predict(fit_t1,type="response")
+# ==========================================================
+# STEP 6: Checking predicted vs observed PTR 
+# ==========================================================
+model_data_end_cl$predicted <- predict(fit_t1, type = "response")
 
-ggplot(model_data_end_cl,
-       aes(x=predicted, y=PTR))+
-  geom_point(alpha=0.2)+
-  geom_smooth()
+# Alpha adjusted to 0.05 because 500 games will have ~250,000+ points
+# rendering alpha=0.2 a solid block of black ink.
+ggplot(model_data_end_cl, aes(x = predicted, y = PTR)) +
+  geom_point(alpha = 0.05, color = "midnightblue") +
+  geom_smooth(color = "red", method = "gam") +
+  theme_minimal() +
+  labs(title = "Predicted vs Observed PTR (500 Games)")
 
 
 
-# Cross validation
+
+# ==========================================================
+# STEP 7: 10-Fold Grouped Cross Validation
+# ==========================================================
+
 
 library(rsample)
+library(foreach)
+library(doParallel)
 
 set.seed(123)
-folds <- group_vfold_cv(model_data_end_cl, group = match_id, v = 5)
+folds <- group_vfold_cv(model_data_end_cl, group = match_id, v = 10)
 
-# Create an empty vector to store our errors
-rmse_vector <- numeric(5)
+# Set up parallel cluster using 1 less than your maximum CPU cores
+cores <- min(parallel::detectCores() - 1, 10) 
+cl <- makeCluster(cores)
+registerDoParallel(cl)
 
-# Loop through each of the 5 folds step-by-step
-for (i in 1:5) {
+cat("\nStarting Parallel 10-Fold CV on", cores, "cores...\n")
+
+# This distributes the 10 folds across your CPU cores to run simultaneously
+rmse_vector <- foreach(
+  i = 1:10, 
+  .packages = c("glmmTMB", "rsample"), 
+  .combine = 'c'
+) %dopar% {
   
-  # 1. Split the data simply
+  # Split the data
   train_data <- analysis(folds$splits[[i]])
   test_data  <- assessment(folds$splits[[i]])
   
-  # 2. Fit the model
+  # Fit model on training split 
+  # Note: ziformula = ~1 keeps the zero-inflation model lightweight
   model <- glmmTMB(
     formula = f_t1,
     data = train_data,
@@ -531,25 +571,26 @@ for (i in 1:5) {
     ziformula = ~1
   )
   
-  # 3. Predict on unseen test data
+  # Predict on unseen test data
   preds <- predict(
     model, 
     newdata = test_data, 
     type = "response", 
-    allow.new.levels = TRUE  # Handles new players in the test set safely
+    allow.new.levels = TRUE
   )
   
-  # 4. Calculate RMSE and save it
-  rmse_vector[i] <- sqrt(mean((test_data$PTR - preds)^2, na.rm = TRUE))
+  # Return RMSE for this fold
+  sqrt(mean((test_data$PTR - preds)^2, na.rm = TRUE))
 }
 
+# Always shut down the parallel workers when done!
+stopCluster(cl)
+registerDoSEQ()
+
 # Print the final results
+cat("\n--- CV Results (500 Games) ---\n")
 print(rmse_vector)
-mean(rmse_vector)
-
-
-
-# ..........................................................
+cat("Mean CV RMSE:", mean(rmse_vector), "\n")
 
 #  print(rmse_vector)
 # 0.010379349 0.011313441 0.007328700 0.006847168 0.005753726
