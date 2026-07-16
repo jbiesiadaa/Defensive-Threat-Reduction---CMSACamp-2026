@@ -1119,5 +1119,329 @@ cat("Mean CV AUC:", round(mean(cv_auc_results), 4),
 
 
 
+# Mixed effects modellll...................
+
+
+library(mgcv)
+library(broom)
+
+
+# Convert the ID columns to factors so R knows they are discrete categories
+train_data <- train_data |>
+  mutate(
+    player_id = as.factor(player_id),
+    defending_team_id = as.factor(defending_team_id)
+  )
+
+valid_data <- valid_data |>
+  mutate(
+    player_id = as.factor(player_id),
+    defending_team_id = as.factor(defending_team_id)
+  )
+
+
+library(mgcv)
+
+logit_mixed_gam <- bam(
+  PTR_binary ~
+    s(carrier_x_end, carrier_y_end, k = 15) +
+    duration_z +
+    carrier_position_group +
+    game_state +
+    organised_defense +
+    inside_defensive_shape_start +
+    nearest_def_dist_z +
+    any_pressure +
+    any_pressing +
+    any_counter_press +
+    any_recovery_press +
+    n_passing_options_dangerous_not_difficult_z +
+    n_passing_options_line_break_z +
+    best_option_pass_distance_end_z +
+    nearest_def_dist_best_option_end_z +
+    n_within_5m_best_option_end_z +
+    n_defenders_in_best_option_lane_z +
+    min_dist_to_best_option_lane_z +
+    dc_defmid_spread_end_z +
+    
+    # RANDOM EFFECTS 
+    s(player_id, bs = "re") +
+    s(defending_team_id, bs = "re"),
+  
+  family = binomial(link = "logit"),
+  data = train_data,
+  
+  # Crucial bam() optimizations for massive speedup:
+  method = "fREML",        # Fast REML optimization
+  discrete = TRUE,         # Discretizes covariates to speed up matrix math
+  cluster = 4              # Uses 4 CPU cores
+)
+
+
+
+
+# 2. Compare the Models
+# Because both models are fit using mgcv::gam, we can compare them directly!
+anova(logit_base, logit_mixed_gam, test = "Chisq")
+
+library(pROC)
+
+
+
+# ==========================================
+# 1. GENERATE PREDICTIONS ON VALIDATION SET
+# ==========================================
+
+# Predict log-odds and convert to probabilities [type = "response"]
+# (Make sure valid_data has player_id and defending_team_id as factors!)
+valid_preds_base  <- predict(logit_base, newdata = valid_data, type = "response")
+valid_preds_mixed <- predict(logit_mixed_gam, newdata = valid_data, type = "response")
+
+
+# ==========================================
+# 2. CALCULATE AUC (Area Under the ROC Curve)
+# ==========================================
+
+auc_base  <- roc(valid_data$PTR_binary, valid_preds_base)$auc
+auc_mixed <- roc(valid_data$PTR_binary, valid_preds_mixed)$auc
+
+
+# ==========================================
+# 3. EXTRACT AIC & BIC
+# ==========================================
+
+# Extract AIC
+aic_base  <- AIC(logit_base)
+aic_mixed <- AIC(logit_mixed_gam)
+
+# Extract BIC
+bic_base  <- BIC(logit_base)
+bic_mixed <- BIC(logit_mixed_gam)
+
+
+# ==========================================
+# 4. COMPARE RESULTS IN A CLEAN TABLE
+# ==========================================
+
+comparison_results <- tibble(
+  Metric = c("AIC (Lower is Better)", "BIC (Lower is Better)", "Validation AUC (Higher is Better)"),
+  Baseline_Model = c(aic_base, bic_base, as.numeric(auc_base)),
+  Mixed_Effects_Model = c(aic_mixed, bic_mixed, as.numeric(auc_mixed))
+) |>
+  mutate(
+    Difference = Baseline_Model - Mixed_Effects_Model
+  )
+
+print(comparison_results)
+
+
+
+
+
+# 1. Extract the parametric terms (Fixed Effects) as Odds Ratios
+mixed_gam_coefs <- tidy(
+  logit_mixed_gam, 
+  parametric = TRUE,     # Keeps your output clean!
+  exponentiate = TRUE,   # <--- Converts raw estimates into Odds Ratios
+  conf.int = TRUE
+)
+
+print(mixed_gam_coefs,n=23)
+
+# 2. View them Odds Ratio
+sorted_mixed_coefs <- mixed_gam_coefs |>
+  filter(term != "(Intercept)") |>
+  arrange(desc(estimate)) |>
+  rename(odds_ratio = estimate)
+
+print(sorted_mixed_coefs, n = 23)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Top/bottom players 
+
+
+
+library(tidyverse)
+
+# 1. Get the names and values of all coefficients
+all_coefs <- coef(logit_mixed_gam)
+
+# 2. Extract and clean up player random effects
+player_terms <- tibble(
+  term = names(all_coefs),
+  effect = all_coefs
+) |>
+  filter(str_detect(term, fixed("s(player_id)"))) |>
+  mutate(
+    player_id = str_remove(term, fixed("s(player_id)."))
+  )
+
+# Quick check: You should now see multiple players here!
+print(head(player_terms))
+
+# 3. Grab the top 5 and bottom 5 players
+top_players <- player_terms |>
+  arrange(desc(effect)) |>
+  slice_head(n = 5)
+
+bottom_players <- player_terms |>
+  arrange(desc(effect)) |>
+  slice_tail(n = 5)
+
+top_bottom_players <- bind_rows(top_players, bottom_players)
+
+# 4. Clear graphics and plot
+dev.off()
+
+ggplot(top_bottom_players, aes(x = reorder(player_id, effect), y = effect)) +
+  geom_point(size = 3, color = "blue") +
+  # Adds error bars to show the level of uncertainty for each player
+  geom_errorbar(aes(ymin = effect - 0.15, ymax = effect + 0.15), width = 0.2) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red", linewidth = 1) +
+  coord_flip() +
+  theme_bw(base_size = 14) +
+  labs(
+    title = "Player Decision Composure (Random Effects)",
+    subtitle = "Positive = More likely to make a sub-optimal pass\nNegative = More likely to select the optimal pass",
+    x = "Player ID",
+    y = "Effect on Log-Odds of Sub-Optimal Pass (PTR > 0)"
+  )
+
+
+
+
+
+
+
+# 1. Grab the actual player IDs from the factor levels using the plot's index numbers
+plot_indices <- c(320, 103, 41, 572, 199, 88, 665, 182, 54, 225)
+actual_ids <- levels(train_data$player_id)[plot_indices]
+
+# 2. Print a clean lookup table to your console
+tibble(
+  plot_index = plot_indices,
+  actual_player_id = actual_ids
+)
+
+
+# 1. Extract the unique player ID to player name map from your raw data
+player_name_map <- analysis_clean |>
+  distinct(player_id, player_name) |>
+  mutate(player_id = as.character(player_id)) # convert to character for a clean join
+
+# 2. Create the lookup table from your plot results
+composure_lookup <- tibble(
+  plot_index = c(320, 103, 41, 572, 199, 88, 665, 182, 54, 225),
+  player_id = c("27211", "16268", "7036", "58946", "24745", "13432", "332762", "24205", "9563", "25439")
+)
+
+# 3. Join them together to get the names
+unmasked_players <- composure_lookup |>
+  left_join(player_name_map, by = "player_id")
+
+# 4. View the final list!
+print(unmasked_players)
+
+
+
+
+
+
+
+
+#..................... TEAMS .....
+
+library(tidyverse)
+
+# ==============================================================================
+# 1. EXTRACT TEAM RANDOM EFFECTS AND MAP TO ACTUAL IDs
+# ==============================================================================
+# Get all model coefficients
+all_coefs <- coef(logit_mixed_gam)
+
+# Get the original factor levels of the defending teams
+team_levels <- levels(train_data$defending_team_id)
+
+team_terms <- tibble(
+  term = names(all_coefs),
+  effect = all_coefs
+) |>
+  # Filter strictly for the defending team random intercepts
+  filter(str_detect(term, fixed("s(defending_team_id)"))) |>
+  # Parse out the index number (e.g., "s(defending_team_id).12" -> 12)
+  mutate(
+    factor_index = as.integer(str_remove(term, fixed("s(defending_team_id).")))
+  ) |>
+  # Match the index back to your actual database defending team IDs
+  mutate(
+    actual_defending_team_id = team_levels[factor_index]
+  )
+
+# ==============================================================================
+# 2. GRAB THE TOP 5 AND BOTTOM 5 TEAMS (BY COEF VALUE)
+# ==============================================================================
+top_teams <- team_terms |>
+  arrange(desc(effect)) |>
+  slice_head(n = 5)
+
+bottom_teams <- team_terms |>
+  arrange(desc(effect)) |>
+  slice_tail(n = 5)
+
+top_bottom_teams <- bind_rows(top_teams, bottom_teams)
+
+# ==============================================================================
+# 3. PRINT THE SELECTION TO CONSOLE
+# ==============================================================================
+# This shows you the exact IDs you need to look up in your master data!
+print(top_bottom_teams |> select(actual_defending_team_id, effect))
+
+# ==============================================================================
+# 4. PLOT USING THE RAW TEAM IDs
+# ==============================================================================
+dev.off() # Clear the graphics device
+
+ggplot(top_bottom_teams, aes(x = reorder(actual_defending_team_id, effect), y = effect)) +
+  geom_point(size = 3.5, color = "darkgreen") +
+  geom_errorbar(aes(ymin = effect - 0.15, ymax = effect + 0.15), width = 0.2, color = "darkgreen") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red", linewidth = 1) +
+  coord_flip() +
+  theme_bw(base_size = 14) +
+  labs(
+    title = "Defensive Team Difficulty (Random Effects)",
+    subtitle = "Positive = Defensive structures that make sub-optimal passes MORE likely\nNegative = Defensive structures that allow optimal selections",
+    x = "Defending Team ID",
+    y = "Effect on Log-Odds of Sub-Optimal Pass"
+  )
+
+# # ID 885 (FC Cincinnati): 
+# ID 1504 (Vancouver Whitecaps): .
+# ID 1505 (CF Montréal):
+#   ID 1503 (Philadelphia Union):
+#   ID 919 (Seattle Sounders):).
+# ID 883 (New York Red Bulls):.
+# ID 1501 (Real Salt Lake): .
+# ID 2906 (St. Louis City): .
+# ID 2312 (Charlotte FC): 
+#   ID 337 (Orlando City): 
+
+
+
+
+
+
 
 
