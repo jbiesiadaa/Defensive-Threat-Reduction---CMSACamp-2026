@@ -349,7 +349,7 @@ colnames(Logistic_Model_Data)
 
 
 
-# logistic Regression 
+# logis.tic Regression 
 
 # defending team id
 
@@ -525,7 +525,8 @@ ptr_cv <- function(x) {
   
   gam_fit <- bam(
     PTR_binary ~ 
-      s(carrier_x_end, carrier_y_end, k = 15) + 
+      s(carrier_x_end, carrier_y_end, k = 18) + 
+      carrier_position_group +
       duration_z +
       game_state +
       organised_defense +
@@ -552,8 +553,9 @@ ptr_cv <- function(x) {
   
   gamm_fit <- bam(
     PTR_binary ~ 
-      s(carrier_x_end, carrier_y_end,by = carrier_position_group, k = 15) + 
+      s(carrier_x_end, carrier_y_end,k = 18) + 
       duration_z +
+      carrier_position_group+
       game_state +
       organised_defense +
       inside_defensive_shape_start +
@@ -572,7 +574,7 @@ ptr_cv <- function(x) {
       dc_defmid_spread_end_z +
       # s(carrier_position_group, bs = "re") +
       # s(player_id, bs = "re") + 
-      s(player_id, by = carrier_position_group, bs = "re"),
+      s(player_id, bs = "re"),
       # s(defending_team_id, bs = "re"),   
     family = binomial(link = "logit"),
     method = "fREML",
@@ -580,55 +582,11 @@ ptr_cv <- function(x) {
     data = cv_train
   )
   
-  # # Capturing variances
-  # v_comp <- gam.vcomp(gamm_fit)
-  # 
-  # cv_variances[[x]] <<- tibble(
-  #   Random_Effect = c("s(player_id)", "s(defending_team_id)"),
-  #   Variance      = c((v_comp$vc["s(player_id)", "std.dev"])^2, 
-  #                     (v_comp$vc["s(defending_team_id)", "std.dev"])^2),
-  #   Std_Dev       = c(v_comp$vc["s(player_id)", "std.dev"], 
-  #                     v_comp$vc["s(defending_team_id)", "std.dev"])
-  # )
-  # 
-  
-  # --- 4. PREPARE DATA & FIT XGBOOST ---
-  xgb_features <- c(
-    "carrier_x_end", "carrier_y_end", "duration_z", 
-    "game_state", "organised_defense", "inside_defensive_shape_start", 
-    "nearest_def_dist_z", "any_pressure", "any_pressing", "any_counter_press", 
-    "any_recovery_press", "n_passing_options_dangerous_not_difficult_z", 
-    "n_passing_options_line_break_z", "best_option_pass_distance_end_z", 
-    "nearest_def_dist_best_option_end_z", "n_within_5m_best_option_end_z", 
-    "n_defenders_in_best_option_lane_z", "min_dist_to_best_option_lane_z", 
-    "dc_defmid_spread_end_z"
-  )
-  
-  train_x <- model.matrix(~ . - 1, data = cv_train[, xgb_features])
-  test_x  <- model.matrix(~ . - 1, data = cv_test[, xgb_features])
-  
-
-  train_y <- as.factor(cv_train$PTR_binary) 
-  
-  # Fit XGBoost using the updated API arguments
-  xgb_fit <- xgboost(
-    x = train_x,                       
-    y = train_y,                       
-    objective = "binary:logistic",
-    nrounds = 100,         
-    learning_rate = 0.05,               
-    max_depth = 5,         
-    subsample = 0.8,       
-    colsample_bytree = 0.8,
-    seed = 123
-  )
-  
   # Generate predictions on validation data
   cv_out <- tibble(
     logit_pred  = predict(logit_fit, newdata = cv_test, type = "response"),
     gam_pred    = predict(gam_fit, newdata = cv_test, type = "response"),
     gamm_pred   = predict(gamm_fit, newdata = cv_test, type = "response"),
-    xgb_pred    = predict(xgb_fit, test_x),
     test_actual = cv_test$PTR_binary,
     test_fold   = x
   )
@@ -645,7 +603,7 @@ cv_predictions <- map(1:N_FOLDS, ptr_cv) |>
 
 cv_results<- cv_predictions |> 
   pivot_longer(
-    cols = c(logit_pred, gam_pred, gamm_pred, xgb_pred), 
+    cols = c(logit_pred, gam_pred, gamm_pred), 
     names_to = "model", 
     values_to = "test_pred"
   ) |> 
@@ -682,35 +640,40 @@ cv_results<- cv_predictions |>
 print(cv_results)
 
 
+# Adding XGboost result from Julia
 
-# Prepare data for the table
+xgb_row <- tibble(
+  model = "XGBoost",
+  cv_auc = 0.783,
+  cv_accuracy = 0.717,
+  cv_precision = 0.719
+)
+
+# Combine with your existing CV results
 table_data <- cv_results |>
   select(model, cv_auc, cv_accuracy, cv_precision) |>
-  arrange(cv_auc) |>
   mutate(
     model = case_when(
       model == "logit_pred" ~ "Baseline Logistic Regression",
-      model == "mixed_logit_pred" ~ "Mixed Effect Logistic",
       model == "gam_pred"   ~ "Generalized Additive Model (GAM)",
       model == "gamm_pred"  ~ "Generalized Additive Mixed Model (GAMM)",
-      model == "xgb_pred"   ~ "XGBoost",
       TRUE ~ model
     )
-  )
+  ) |>
+  bind_rows(xgb_row) |>
+  arrange(cv_auc)
 
 presentation_table <- table_data |>
   gt() |>
   tab_header(
     title = md("**Comparing predictive performance**")
   ) |>
-  # Rename columns to clean, professional headers
   cols_label(
     model = md("**Model Architecture**"),
     cv_auc = md("**Mean AUC**"),
     cv_accuracy = md("**Accuracy**"),
     cv_precision = md("**Precision**")
   ) |>
-  # Format metrics as percentages/decimals neatly
   fmt_percent(
     columns = c(cv_accuracy, cv_precision),
     decimals = 1
@@ -719,14 +682,12 @@ presentation_table <- table_data |>
     columns = cv_auc,
     decimals = 3
   ) |>
-
   data_color(
     columns = c(cv_auc, cv_accuracy, cv_precision),
     direction = "column",
     palette = "Blues",
     alpha = 0.85
   ) |>
-
   tab_options(
     heading.title.font.size = px(20),
     column_labels.background.color = "#f9f9f9",
@@ -738,39 +699,111 @@ presentation_table <- table_data |>
     table.border.bottom.color = "transparent",
     data_row.padding = px(12)
   ) |>
-  # Bold the model names
   tab_style(
     style = cell_text(color = "#222222"),
     locations = cells_body(columns = model)
-  )
-
+  ) 
 
 presentation_table
 
+# Updated 
 
+# Identify max values dynamically for automatic highlighting
+max_auc       <- max(table_data$cv_auc, na.rm = TRUE)
+max_accuracy  <- max(table_data$cv_accuracy, na.rm = TRUE)
+max_precision <- max(table_data$cv_precision, na.rm = TRUE)
 
+presentation_table <- table_data |>
+  gt() |>
+  tab_header(
+    title = md("**Comparing Predictive Performance**")
+  ) |>
+  cols_label(
+    model = md("**Model Architecture**"),
+    cv_auc = md("**Mean AUC**"),
+    cv_accuracy = md("**Accuracy**"),
+    cv_precision = md("**Precision**")
+  ) |>
+  fmt_percent(
+    columns = c(cv_accuracy, cv_precision),
+    decimals = 1
+  ) |>
+  fmt_number(
+    columns = cv_auc,
+    decimals = 3
+  ) |>
+  # Bold model names
+  tab_style(
+    style = cell_text( color = "#222222"),
+    locations = cells_body(columns = model)
+  ) |>
+  # Highlight highest value in Mean AUC
+  tab_style(
+    style = list(
+      cell_fill(color = "#e0f2f1"),
+      cell_text(weight = "bold", color = "#004d40")
+    ),
+    locations = cells_body(
+      columns = cv_auc,
+      rows = cv_auc == max_auc
+    )
+  ) |>
+  # Highlight highest value in Accuracy
+  tab_style(
+    style = list(
+      cell_fill(color = "#e0f2f1"),
+      cell_text(weight = "bold", color = "#004d40")
+    ),
+    locations = cells_body(
+      columns = cv_accuracy,
+      rows = cv_accuracy == max_accuracy
+    )
+  ) |>
+  # Highlight highest value in Precision
+  tab_style(
+    style = list(
+      cell_fill(color = "#e0f2f1"),
+      cell_text(weight = "bold", color = "#004d40")
+    ),
+    locations = cells_body(
+      columns = cv_precision,
+      rows = cv_precision == max_precision
+    )
+  ) |>
+  # Enable subtle alternating row colors
+  opt_row_striping() |>
+  tab_options(
+    table.font.size = 13,
+    heading.title.font.size = px(18),
+    column_labels.font.weight = "bold",
+    column_labels.background.color = "#f4f8f7",
+    column_labels.border.bottom.width = px(2),
+    column_labels.border.bottom.color = "#1b4943",
+    table_body.border.bottom.color = "#1b4943",
+    table_body.border.bottom.width = px(2),
+    # Accent top border line (Teal)
+    table.border.top.color = "#1b4943",
+    table.border.top.width = px(4),
+    table.border.bottom.color = "transparent",
+    # Light gray/teal background for alternate rows
+    row.striping.background_color = "#f8faf9",
+    data_row.padding = px(10)
+  )
 
-
-
-# Compile and average the random effect variances across all CV folds
-# random_effects_table <- list_rbind(cv_variances) |> 
-#   group_by(Random_Effect) |> 
-#   summarize(
-#     Variance = round(mean(Variance), 4),
-#     Std_Dev  = round(mean(Std_Dev), 4)
-#   )
-# 
-# gt(random_effects_table)
+# Display table
+presentation_table
 
 
 
 
 # Running the model for getting the variable coefficients on entire dataset
 
-final_logit <- glm(
+final_gamm_fit <- bam(
   PTR_binary ~ 
+    s(carrier_x_end, carrier_y_end, k = 15) + 
     duration_z +
     game_state +
+    carrier_position_group+
     organised_defense +
     inside_defensive_shape_start +
     nearest_def_dist_z +
@@ -785,16 +818,24 @@ final_logit <- glm(
     n_within_5m_best_option_end_z +
     n_defenders_in_best_option_lane_z +
     min_dist_to_best_option_lane_z +
-    dc_defmid_spread_end_z,
-  family = binomial(link = "logit"), 
+    dc_defmid_spread_end_z +
+    # s(carrier_position_group, bs = "re") +
+    # s(player_id, bs = "re") + 
+    s(player_id, bs = "re"),
+  # s(defending_team_id, bs = "re"),   
+  family = binomial(link = "logit"),
+  method = "fREML",
+  discrete = TRUE,
   data = model_data_cv
 )
 
-
-coef_raw <- summary(final_logit)$coefficients |> 
-  as.data.frame() |> 
-  tibble::rownames_to_column(var = "Variable") |> 
-  rename(Beta = Estimate, SE = `Std. Error`, p_val = `Pr(>|z|)`) |> 
+coef_raw_gamm <- tidy(final_gamm_fit, parametric = TRUE) |> 
+  rename(
+    Variable = term,
+    Beta = estimate,
+    SE = std.error,
+    p_val = p.value
+  ) |> 
   mutate(
     Odds_Ratio = exp(Beta),
     OR_lower   = exp(Beta - 1.96 * SE),
@@ -803,7 +844,7 @@ coef_raw <- summary(final_logit)$coefficients |>
   filter(Variable != "(Intercept)")
 
 # Clean variable names, filter for p < 0.05, and arrange globally by Odds Ratio
-coef_clean <- coef_raw |> 
+coef_clean_gamm <- coef_raw_gamm |> 
   mutate(
     Clean_Variable = case_when(
       Variable == "duration_z" ~ "Possession Duration (SD)",
@@ -836,10 +877,8 @@ coef_clean <- coef_raw |>
   # Sort globally by Odds Ratio (from highest driver of suboptimal passes down to lowest)
   arrange(desc(Odds_Ratio))
 
-# ==============================================================================
-# 6. GENERATE THE FLAT COEFFICIENTS GT TABLE
-# ==============================================================================
-coefficients_table <- coef_clean |> 
+# Generate the Suboptimal Coefficients Table
+coefficients_table_suboptimal <- coef_clean_gamm |> 
   gt() |> 
   tab_header(
     title = md("**What Drives Suboptimal Pass Choices?**")
@@ -880,18 +919,21 @@ coefficients_table <- coef_clean |>
     data_row.padding = px(8)
   )
 
-# Display the coefficient table
-coefficients_table
+print(coefficients_table_suboptimal)
 
 
+# ==============================================================================
+# SECTION 2: OPTIMAL PASS CHOICES TABLE (LOGIT OBJECT)
+# ==============================================================================
 
-
-
-# Optimal Pass OR (Optimal = 1, Suboptimal = 0)
-coef_raw <- summary(final_logit)$coefficients |> 
-  as.data.frame() |> 
-  tibble::rownames_to_column(var = "Variable") |> 
-  rename(Beta_suboptimal = Estimate, SE = `Std. Error`, p_val = `Pr(>|z|)`) |> 
+# Safely extract fixed parametric coefficients using broom::tidy
+coef_raw_gamm <- tidy(final_gamm_fit, parametric = TRUE) |> 
+  rename(
+    Variable = term,
+    Beta_suboptimal = estimate,
+    SE = std.error,
+    p_val = p.value
+  ) |> 
   mutate(
     # Invert the Beta to represent the log-odds of an OPTIMAL pass (0)
     Beta_optimal = -Beta_suboptimal,
@@ -903,7 +945,7 @@ coef_raw <- summary(final_logit)$coefficients |>
   filter(Variable != "(Intercept)")
 
 # Clean variable names, filter for p < 0.05, and arrange globally by Odds Ratio
-coef_clean <- coef_raw |> 
+coef_clean_gamm <- coef_raw_gamm |> 
   mutate(
     Clean_Variable = case_when(
       Variable == "duration_z" ~ "Possession Duration (SD)",
@@ -916,7 +958,7 @@ coef_clean <- coef_raw |>
       Variable == "dc_defmid_spread_end_z" ~ "Defensive Midfield Spread (SD)",
       Variable == "nearest_def_dist_z" ~ "Distance to Nearest Defender (SD)",
       Variable == "any_pressureTRUE" ~ "Under Any Pressure (Yes)",
-      Variable == "any_pressingTRUE" ~ "Under Active Pressing (Yes)",
+      Variable == "any_pressingTRUE" ~ "Under Any Pressing (Yes)",
       Variable == "any_counter_pressTRUE" ~ "Under Counter-Pressing (Yes)",
       Variable == "any_recovery_pressTRUE" ~ "Under Recovery Pressing (Yes)",
       Variable == "n_passing_options_dangerous_not_difficult_z" ~ "Num. Dangerous Passing Options (SD)",
@@ -936,13 +978,14 @@ coef_clean <- coef_raw |>
   # Sort globally by Odds Ratio (from highest driver of optimal passes down to lowest)
   arrange(desc(Odds_Ratio))
 
-  coef_top_bottom <- bind_rows(
-    head(coef_clean, 5), # Strongest 5 facilitators (OR >> 1)
-    tail(coef_clean, 5) ) # Strongest 5 suppressors (OR << 1))
+# Isolate top and bottom 5 effects
+coef_top_bottom <- bind_rows(
+  head(coef_clean_gamm, 5), # Strongest 5 facilitators (OR >> 1)
+  tail(coef_clean_gamm, 5)  # Strongest 5 suppressors (OR << 1)
+)
 
-# 6. GENERATE THE OPTIMAL COEFFICIENTS GT TABLE
-# ==============================================================================
-coefficients_table <- coef_top_bottom |> 
+# Generate the Optimal Coefficients Table
+coefficients_table_optimal <- coef_top_bottom |> 
   gt() |> 
   tab_header(
     title = md("**What Drives Optimal High-Threat Pass Decisions?**"),
@@ -958,7 +1001,8 @@ coefficients_table <- coef_top_bottom |>
     columns = c(Odds_Ratio, OR_lower, OR_upper),
     decimals = 2
   ) |> 
-
+  # Green = factors driving optimal choice (OR > 1)
+  # Red = factors suppressing optimal choice (OR < 1)
   tab_style(
     style = cell_text(color = "#1b5e20", weight = "bold"),
     locations = cells_body(
@@ -983,10 +1027,36 @@ coefficients_table <- coef_top_bottom |>
     data_row.padding = px(8)
   )
 
-# Display the coefficient table
-coefficients_table
+print(coefficients_table_optimal)
 
 
+
+
+# Why random intercept?
+
+library(mgcv)
+
+# Variance of the player random intercept
+vc <- gam.vcomp(final_gamm_fit)
+vc
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# EDAs 
 
 
 
@@ -1002,6 +1072,10 @@ ggplot(model_data_end_logis, aes(x = carrier_x_end, y = carrier_y_end)) +
   labs(title = "Where on the Pitch Do Optimal vs. Sub-Optimal Decisions Happen?",
        x = "Pitch X", y = "Pitch Y", fill = "Density")
 
+
+# Carrier's position and decision
+
+plot(final_gamm_fit, select = 1, scheme = 2, main = "Spatial Decision Surface")
 
 
 
@@ -1031,7 +1105,41 @@ model_data_end_logis |>
   scale_fill_manual(values = c("Optimal" = "#4a7c9e", "Sub-Optimal" = "#c0392b")) +
   theme_minimal(base_size = 13) +
   labs(title = "Optimal Pass Rate by Position",
-       x = NULL, y = "% of Carrying Events", fill = NULL)
+       x = NULL, y = "% of possession", fill = NULL)
+
+
+
+
+# ##
+# 1508 - > Atlanta
+# 1498 -> St. Jose Earthquake
+# 1504 -> Vancouver
+# 1503 -> Philly Union
+# 863 -> Columbus Crew
+# 1501 - > Real Salt Lake
+# 1507 -> Nashville
+# 1506 -> New York City Fc
+# 2312 -> Charlotte
+# 1500 -> New Enegland
+# 884 -> DC United
+# 1502 -> Toronto
+# 885 -> Cincy 
+# 862 -> Houston
+# 1494 -> Miami 
+# 1505 -> Monteral
+# 337 -> Orlando
+# 883 -> New York Red Bulls
+# 1757 -> Austin
+# 2906 -> St. Louis
+# 336 -> Dallas
+# 861 -> Minnesota
+# 919 ->  Seatlle
+# 1499 -> Colorado Rapids
+# 860 -> Portland Timbers
+# 1497 -> Sporting Kansas City
+# 1495 -> LA Galaxy
+# 1496-> Chicago Fire
+# 918 -> LAFC
 
 
 
@@ -1043,152 +1151,6 @@ model_data_end_logis |>
 
 
 
-
-
-
-
-
-
-
-
-
-
-# Top/bottom players 
-
-
-library(tidyverse)
-library(gt)
-
-# Note: Make sure to run this using your full model object fit on your training data,
-# or your final model object saved outside the CV loop (e.g., gamm_fit)
-
-full_gamm_fit <- bam(
-  PTR_binary ~ s(carrier_x_end, carrier_y_end, by = carrier_position_group, k = 20) + 
-    duration_z + game_state + organised_defense + inside_defensive_shape_start +
-    nearest_def_dist_z + any_pressure + any_pressing + any_counter_press + any_recovery_press +
-    n_passing_options_dangerous_not_difficult_z + n_passing_options_line_break_z +
-    best_option_pass_distance_end_z + nearest_def_dist_best_option_end_z +
-    n_within_5m_best_option_end_z + n_defenders_in_best_option_lane_z +
-    min_dist_to_best_option_lane_z + dc_defmid_spread_end_z +
-    s(carrier_position_group, bs = "re") +
-    s(player_id, bs = "re") + 
-    s(player_id, by = carrier_position_group, bs = "re"),   
-  family = binomial(link = "logit"),
-  method = "fREML",
-  discrete = TRUE,
-  nthreads = max(1, detectCores() - 1), # Use all available power since it's just one run
-  data = model_data_cv
-)
-
-# 2. Extract coefficients from the new object
-all_coefs <- coef(full_gamm_fit)
-
-# 3. Extract Baseline Player Effects
-player_baseline <- tibble(
-  term = names(all_coefs),
-  baseline_effect = all_coefs
-) |>
-  filter(str_detect(term, fixed("s(player_id).")) & !str_detect(term, "by")) |>
-  mutate(player_id = str_remove(term, fixed("s(player_id).")))
-
-# 4. Extract Position-Specific Shifts
-player_shifts <- tibble(
-  term = names(all_coefs),
-  shift_effect = all_coefs
-) |>
-  filter(str_detect(term, fixed("s(player_id):"))) |>
-  mutate(
-    cleaned = str_remove(term, fixed("s(player_id):carrier_position_group")),
-    player_id = str_extract(cleaned, "^[0-9]+"),
-    position_group = str_extract(cleaned, "[A-Za-z ]+$")
-  )
-
-# 5. Map back to Real Player Names
-player_name_map <- model_data_cv |>
-  distinct(player_id) |> # Or use analysis_clean if player_name is there
-  mutate(player_id = as.character(player_id))
-
-# Combine and compile profile
-player_profile <- player_baseline |>
-  left_join(player_shifts, by = "player_id") |>
-  left_join(player_name_map, by = "player_id") |>
-  mutate(
-    total_positional_effect = baseline_effect + coalesce(shift_effect, 0)
-  ) |>
-  select(position_group, baseline_effect, shift_effect, total_positional_effect)
-
-# ==============================================================================
-# CREATE PRESENTATION TABLE FOR TOP & BOTTOM COMPOSURE SHIFTS
-# ==============================================================================
-table_display_data <- player_profile |>
-  filter(position_group %in% c("Center Back", "Wide Back", "Midfield")) |>
-  arrange(total_positional_effect) |> 
-  slice(c(1:5, (n()-4):n()))
-
-player_composure_table <- table_display_data |>
-  gt() |>
-  tab_header(
-    title = md("**Player Passing Composure by Position Group**"),
-    subtitle = "Isolating defensive and midfield passing decision deviations"
-  ) |>
-  cols_label(
-    player_name = md("**Player Name**"),
-    position_group = md("**Role**"),
-    baseline_effect = md("**Baseline Style**"),
-    shift_effect = md("**Positional Shift**"),
-    total_positional_effect = md("**Net Decision Tendency**")
-  ) |>
-  fmt_number(
-    columns = c(baseline_effect, shift_effect, total_positional_effect),
-    decimals = 3
-  ) |>
-  tab_source_note(
-    source_note = "Interpretation: Negative Net values signal a higher likelihood of choosing the optimal passing option under pressure."
-  ) |>
-  data_color(
-    columns = total_positional_effect,
-    direction = "column",
-    palette = "BrBG", 
-    alpha = 0.7
-  ) |>
-  tab_options(
-    heading.title.font.size = px(18),
-    column_labels.background.color = "#fdfdfd",
-    column_labels.border.bottom.width = px(2),
-    column_labels.border.bottom.color = "#444444",
-    data_row.padding = px(10)
-  )
-
-player_composure_table
-
-# 1. Grab the actual player IDs from the factor levels using the plot's index numbers
-plot_indices <- c(320, 103, 41, 572, 199, 88, 665, 182, 54, 225)
-actual_ids <- levels(train_data$player_id)[plot_indices]
-
-# 2. Print a clean lookup table to your console
-tibble(
-  plot_index = plot_indices,
-  actual_player_id = actual_ids
-)
-
-
-# 1. Extract the unique player ID to player name map from your raw data
-player_name_map <- analysis_clean |>
-  distinct(player_id, player_name) |>
-  mutate(player_id = as.character(player_id)) # convert to character for a clean join
-
-# 2. Create the lookup table from your plot results
-composure_lookup <- tibble(
-  plot_index = c(320, 103, 41, 572, 199, 88, 665, 182, 54, 225),
-  player_id = c("27211", "16268", "7036", "58946", "24745", "13432", "332762", "24205", "9563", "25439")
-)
-
-# 3. Join them together to get the names
-unmasked_players <- composure_lookup |>
-  left_join(player_name_map, by = "player_id")
-
-# 4. View the final list!
-print(unmasked_players)
 
 
 

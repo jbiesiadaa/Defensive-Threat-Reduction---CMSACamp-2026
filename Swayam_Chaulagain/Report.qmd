@@ -1,0 +1,212 @@
+---
+title: "Quantifying Passing Decision Quality Under Pressure"
+author:
+  - Julia Biesiada 
+  - Swayam Chaulagain
+date: "July 24, 2026"
+toc: true
+format:
+  html:
+    theme: cosmo
+    html-math-method: katex
+    self-contained: true
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+---
+
+## Introduction 
+
+Describe the problem and why it is important.
+
+## Data
+
+**Source:** The dataset used in this analysis was provided by SkillCorner. It contains data from 520 matches played in Major League Soccer (MLS) during the 2023 season. For each match, we had three sets of data: Event Data, Tracking Data, and Match Information Data.
+Event Data consists of detailed information on both on-ball and off-ball activities, including ball carrier coordinates, shots, goals, fouls, game state, interceptions, possession outcomes, and many other variables for four main event types: Player Possessions, On-Ball Engagements, Passing Options, and Off-Ball Runs. Each event has a start frame, end frame, and timestamp, which can be linked to the tracking data. Tracking Data provides the ball coordinates and the coordinates of all 22 players on the field at 10 frames per second (fps). Match Information contains the home and away teams, stadium, date, competition details, and information for all players, including substitutes. 18 matches did not have high-quality event data; therefore, 502 matches were included in this study.
+
+
+**Preprocessing:** Since we were interested in analyzing passing decisions, we joined the Player Possessions data with the Passing Options and On-Ball Engagements data for each event. We also linked the event data with the tracking data to extract important defensive features. The event data was standardized so that the attacking team always attacked from left to right. To ensure consistency, we also standardized the attacking direction in the tracking data.
+
+
+## Methods
+
+To answer our research question, we first needed a way to quantify passing decisions. To do this, we used the outputs of the SkillCorner models available in our dataset: 
+
+* [Expected Receiver Model: ](https://skillcorner.crunch.help/en/models-general-concepts/passing-option) This model identifies realistic passing options based on the passing option score. The passing option score is the probability that a player will be the target of a pass. It is calculated using a Graph Neural Network (GNN) model that considers features such as the ball carrier's coordinates, speed, movement angle, inter-player distance, and teammates' positions. For an option to be considered a passing option, it must have a passing option score > 0.6.
+
+* [Xthreat Model: ](https://skillcorner.crunch.help/en/models-general-concepts/threat) This model estimates the expected threat (xThreat), defined as the probability of a goal occurring within 10 seconds if a player receives the pass. Using a similar GNN model trained on the same features as the Expected Receiver Model, it estimates the xThreat value for all passing options.
+
+
+**Passing Threat Reduction (PTR) Metric: ** For each passing situation, we calculated the Passing Threat Reduction (PTR), defined as the difference between the maximum threat available and the xThreat of the pass actually chosen by the ball carrier. We also applied a realistic filter by considering only passing options with a pass completion probability (xPass) > 0.68. A PTR value of 0 indicates that the ball carrier selected the highest-threat passing option available in that situation. A PTR value > 0 indicates that the ball carrier chose a safer pass despite a higher-threat passing option being available.
+
+$$PTR  = max(Xthreat_{realistic}) - Xthreat_{chosen}$$
+
+**Response Variable: ** We formulated our response variable as a binary outcome to determine whether the attempted pass was optimal or sub-optimal. We defined a pass as optimal if the ball carrier chose the best (highest-threat) passing option and sub-optimal if the ball carrier did not choose the highest-threat passing option and instead selected a safer option.
+
+
+
+$$
+PTR_{binary} = 
+\begin{cases} 
+1, & \text{PTR } > 0 & \text{sub-optimal pass} \\ 
+0, & \text{PTR } = 0 & \text{optimal pass}
+\end{cases}
+$$
+
+
+**Spatial Features: ** In addition to the variables provided in the SkillCorner event and tracking data, we added some spatial features to better explain the defensive context during each passing situation. These features were designed to capture defensive pressure, defensive organization, and the spatial relationship between defenders, the ball carrier, and the best available passing option.
+
+
+* **Defensive Midfield Spread**:To evaluate the compactness of the defending team, we calculated the spread of the defenders and midfielders at the passing moment. We chose defenders and midfielders because they are usually responsible for maintaining the overall defensive structure. Using the similar idea used by [Forcher et al.](https://journals.sagepub.com/doi/pdf/10.1177/17479541231172695), the spread was calculated as the sum of the squared Euclidean distances between each defender or midfielder and and the centroid of the defending unit:
+
+$$
+S = \sum_{i=1}^{n} \left[ (x_i - \bar{x})^2 + (y_i - \bar{y})^2 \right]
+$$
+where $(x_i,y_i)$ is the position of defender or midfielder i, $(\bar{x}, \bar{y})$ is the centroid of the defense, and n is the number of players included in the calculation. The smaller value of S indicates that defense was more compact whereas larger value indicates more spreaded defense structure. 
+
+
+* **Passing Lane**: For quantifying how open the best available passing option from the ball carrier, we defined the idea of passing lane. Based on the idea of the line corridor proposed by [Cascioli et al.](https://lirias.kuleuven.be/4393200?&lang=en
+), we modeled the passing lane as a fixed-width rectangular corridor centered on the line segment that connects the ball carrier $p_a$ and the best available passing option $r_i$. The corridor is defined as: 
+
+$$
+R_w(p_a,r_i)
+=
+\left\{
+x \in \mathbb{R}^2
+\;\middle|\;
+\operatorname{perp\_dist}\!\left(x,L(p_a,r_i)\right)<w/2
+\right\}.
+$$
+where $L(p_a,r_i)$ denotes the line segment connecting the ball carrier and the best available passing option. We used the lane width (w) of 4 m in our analysis considering the variation in player and ball positions. 
+
+Unlike the original line corridor approach, which classified a passing lane as blocked or not, we used the corridor to derive two continuous measures of defensive coverage:
+
+  * Nearest defender distance to the passing lane: minimum perpendicular distance between any defender and the passing lane.
+
+  * Number of defenders in the passing lane: Total number of defenders inside the lane.
+  
+  
+
+**Predictor Variables: ** After data preprocessing, correlation analysis, and feature engineering, 20 variables were selected for modeling:
+
+  * Match context: game state, possession duration
+  * Ball carrier context: location, playing position, Nearest defender distance
+  * Defensive pressure: Pressing (group pressure), pressure, defensive organization
+  * Passing options:  Dangerous options, line-breaking opportunities
+  * Best passing option: Distance, defensive pressure, passing lane features
+
+
+## Analysis
+
+
+Because our response variable was binary, we began by fitting a baseline **Logistic Regression Model**. The baseline logistic model is given by:
+
+$$
+\log\left(\frac{E(Y \mid X=x)}{1 - E(Y \mid X=x)}\right)
+= \beta_0 + \sum_{j=1}^{p} \beta_j x_j.
+$$
+where $E(Y | X=x)$ denotes the probability of sub-optimal pass given the predictor variables, $x_j$ represents the j-th predictor, and $\beta_j$ are corresponding regression coefficients. 
+
+
+**Generalized Additive Model (GAM)**
+
+The logistic regression assumes linear relationship between all of its predictor variables and response. But we wanted to include the ball carrier's location, which is inherently nonlinear, so we extended the baseline logistic regression using a Generalized Additive Model (GAM). This allowed us to add the carrier's x- and y-coordinates as a smooth two-dimensional function,
+
+$$
+\log\left(\frac{E(Y \mid X=x)}{1 - E(Y \mid X=x)}\right)
+= \beta_0 + s(x_{\text{carrier}}, y_{\text{carrier}})
++ \sum_{j=1}^{p} \beta_j x_j.
+$$
+where s(⋅) is a smooth spatial function. Now, the effect of the ball carrier's position could vary nonlinearly across different regions of the pitch while the linear effects for the remaining predictors remains the same. 
+
+
+**Generalized Additive Mixed Model (GAMM)**
+
+Our possession level dataset had multiple passes by same players. To account for repeated observations and unseen differences in players' passing behavior, we extended our GAM model by including a player-specific random intercept $u_{player}$, resulting in a Generalized Additive Mixed Model (GAMM): 
+
+$$
+\log\left(\frac{E(Y \mid X=x)}{1 - E(Y \mid X=x)}\right)
+= \beta_0 + s(x_{\text{carrier}}, y_{\text{carrier}})
++ \sum_{j=1}^{p} \beta_j x_j
++ {u_{player}}.
+$$
+where $u_{player}$ ~ $N(0,\sigma_{u}^2)$ . In the model implementation, this random effect allows each player to have their own baseline probability of making a sub-optimal pass after accounting for the fixed effects. 
+
+
+
+**Extreme Gradient Boosting (XgBoost)**
+
+We finally compared all the statistical models with the Xgboost which is capable of capturing all the nonlinear interaction between the variables. We did this to assess predictive benchmark of the model and get idea whether allowing complex machine learning model would improve the prediction performance. 
+
+
+**Model Evaluation**
+
+All models were then evaluated using five-fold cross-validation at the match level to prevent data leakage between the training and testing sets. The average performance across the five folds is summarized in Table 1. Model performance was assessed using Accuracy, Precision, and Area Under the ROC Curve (AUC). 
+
+![Table 1: Average model predictive performances across five folds ](Model_performance_upd.png){width=65%}
+
+As model complexity increased, predictive performance improved, with XGBoost achieving the highest  across all evaluation metrics. However, the Generalized Additive Mixed Model (GAMM) achieved comparable performance and since it provides interpretable estimates of predictor effects, we selected the GAMM as the final model for inference.
+
+
+## Results
+
+![Table 2: Significant factors that results in optimal passes based on the GAAM model](GAAM_predictors.png){width=62%}
+  
+Above table summarizes the estimated odds ratios from the final Generalized Additive Mixed Model. Factors with OR > 1 increases the likelihood of selecting the highest-threat pass and OR < 1  decreases the likelihood of selecting the highest-threat pass. Overall, defensive positioning around the best passing option had the strongest influence on whether attackers selected the optimal pass. Measures of defensive pressure, passing lane coverage, and defensive organization were also significant predictors of passing decisions.
+
+
+**Player Performances**
+
+
+## Discussion
+
+Our framework evaluates passing decisions relative to the options available at the
+passing moment and identifies the defensive, contextual, and spatial factors influencing
+selection of the highest-threat option. Comparing actual choices with model
+predictions among attacking midfielders provides a fairer assessment of individual
+passing styles within the same position.
+
+The results demonstrate that defensive positioning can influence the passing decisions and reduce the overall attacking threat, even without resulting in a turnover or interception. This framework also provides a quantitative approach for evaluating passing decision-making while accounting for the context of each passing situation. By combining interpretable statistical models with tracking and event data, this approach offers a foundation for future analyses of both attacking decision-making and defensive effectiveness.
+
+
+**Limitations**:
+
+* Only pass ending possessions were analyzed, excluding prior actions.
+* Results depend on SkillCorner tracking, xPass, and xThreat estimates.
+* The study covers one MLS season, limiting season to season comparisons. 
+
+**Future Work**:
+
+* Model continuous PTR for suboptimal passes using other statistical models like Zero Inflated Beta
+* Model continuous PTR for suboptimal passes
+* Validate across additional MLS seasons, the NWSL, and other leagues
+
+
+
+## Acknowlegement 
+Special thanks to Daniel Wicker, Dr. Yurko, Erin Franke, Sara Colando, Quang Nguyen the CMSACamp TAs, and the CMU Statistics Department for their guidance and support, and for making this summer research experience possible, successful, and enjoyable
+
+
+## Citations
+
+Leander Forcher, Forcher, L., Altmann, S., Darko Jekauc, & Kempe, M. (2023). Is a compact organization important for defensive success in elite soccer? – Analysis based on player tracking data. International Journal of Sports Science & Coaching, 174795412311726–174795412311726. https://doi.org/10.1177/17479541231172695
+
+
+Cascioli, L., Wang, A., Stradiotti, L., Van Roy, M., Robberechts, P., Wouters, M., Jaspers, A., & Davis, J. (2025). Quantifying Off-Ball Defensive Impact through Cover Shadows. In Proceedings of the 2025 Hudl Performance Insights Conference. Hudl StatsBomb; https://www.hudl.com/en_gb/hudlproconference.
+
+
+
+## Contact Information
+
+Julia Biesiada, Indiana University Indianapolis, [jbiesiad@iu.edu](jbiesiad@iu.edu)
+
+Swayam Chaulagain, University of Southern Mississippi, [swayam2060@gmail.com](swayam2060@gmail.com)
+
+
+## Code Availability
+
+Code available on [GitHub](https://github.com/jbiesiadaa/Defensive-Threat-Reduction---CMSACamp-2026)
+
