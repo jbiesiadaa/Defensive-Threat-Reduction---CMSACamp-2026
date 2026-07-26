@@ -9,18 +9,20 @@
 </p>
 
 <p align="center">
-  <a href="https://en.wikipedia.org/wiki/Charlotte_FC">
-    <img src="https://upload.wikimedia.org/wikipedia/it/thumb/9/91/Charlotte_FC_logo.svg/250px-Charlotte_FC_logo.svg.png"
-         alt="Charlotte FC logo"
-         height="120">
+  <a href="https://www.charlottefootballclub.com/about">
+    <img
+      src="https://upload.wikimedia.org/wikipedia/it/thumb/9/91/Charlotte_FC_logo.svg/250px-Charlotte_FC_logo.svg.png"
+      alt="Charlotte FC logo"
+      width="120">
   </a>
 
   &nbsp;&nbsp;&nbsp;&nbsp;
 
   <a href="https://www.linkedin.com/company/carnegie-mellon-university-statistics-data-science">
-    <img src="https://media.licdn.com/dms/image/v2/D560BAQFacqlvLlPJUw/company-logo_200_200/company-logo_200_200/0/1667848317361?e=2147483647&t=G2QpQtYPOZQolYyZ2C9G1UdyfilQC6jlW8yf_HWPeto&v=beta"
-         alt="Carnegie Mellon Statistics and Data Science logo"
-         height="120">
+    <img
+      src="https://media.licdn.com/dms/image/v2/D560BAQFacqlvLlPJUw/company-logo_200_200/company-logo_200_200/0/1667848317361?e=2147483647&v=beta&t=G2QpQtYPOZQolYyZ2C9G1UdyfilQC6jlW8yf_HWPeto"
+      alt="CMSACamp logo"
+      width="120">
   </a>
 </p>
 
