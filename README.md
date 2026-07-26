@@ -40,6 +40,8 @@ We examine how defensive, spatial, and contextual factors influence whether a pl
 
 [Read the Full Report](https://www.stat.cmu.edu/cmsac/sure/2026/showcase/soccer_passing/report.html)
 
+[View Presentation](https://docs.google.com/presentation/d/1-LlrpeMXcfCt_RJlcTGnq9Zt7fdPnuHtAA3ubasTqJY/edit?usp=sharing)
+
 ## Acknowledgments
 
 Special thanks to Daniel Wicker, Dr. Yurko, Erin Franke, Sara Colando, the CMSACamp TAs, and the Carnegie Mellon University Department of Statistics & Data Science for their guidance and support, and for making this summer research experience possible, successful, and enjoyable.
