@@ -1,4 +1,3 @@
-
 <h1 align="center">Quantifying Passing Decision Quality Under Pressure</h1>
 
 <p align="center">
@@ -13,7 +12,15 @@
   <a href="https://en.wikipedia.org/wiki/Charlotte_FC">
     <img src="https://upload.wikimedia.org/wikipedia/it/thumb/9/91/Charlotte_FC_logo.svg/250px-Charlotte_FC_logo.svg.png"
          alt="Charlotte FC logo"
-         width="130">
+         height="120">
+  </a>
+
+  &nbsp;&nbsp;&nbsp;&nbsp;
+
+  <a href="https://www.linkedin.com/company/carnegie-mellon-university-statistics-data-science">
+    <img src="https://media.licdn.com/dms/image/v2/D560BAQFacqlvLlPJUw/company-logo_200_200/company-logo_200_200/0/1667848317361?e=2147483647&t=G2QpQtYPOZQolYyZ2C9G1UdyfilQC6jlW8yf_HWPeto&v=beta"
+         alt="Carnegie Mellon Statistics and Data Science logo"
+         height="120">
   </a>
 </p>
 
@@ -21,7 +28,7 @@
 
 Soccer is a game of decisions under pressure. On every touch, a player must identify the available passing options and select the best one while defenders close space and block passing lanes.
 
-Most passing metrics focus on outcomes, such as whether a pass was completed or how much threat it created. This project instead evaluates the selected pass relative to the realistic alternatives available at that moment.
+Most passing metrics focus on outcomes, such as whether a pass was completed or how much threat it created. This project evaluates the selected pass compared to the realistic alternatives available at that moment.
 
 We examine how defensive, spatial, and contextual factors influence whether a player selects the highest threat passing option.
 
@@ -30,3 +37,8 @@ We examine how defensive, spatial, and contextual factors influence whether a pl
 [View the Project Poster](https://www.stat.cmu.edu/cmsac/sure/2026/showcase/soccer_passing/poster.pdf)
 
 [Read the Full Report](https://www.stat.cmu.edu/cmsac/sure/2026/showcase/soccer_passing/report.html)
+
+## Acknowledgments
+
+Special thanks to Daniel Wicker, Dr. Yurko, Erin Franke, Sara Colando, the CMSACamp TAs, and the Carnegie Mellon University Department of Statistics & Data Science for their guidance and support, and for making this summer research experience possible, successful, and enjoyable.
+
