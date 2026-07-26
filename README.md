@@ -9,19 +9,19 @@
 </p>
 
 <p align="center">
-  <a href="https://www.charlottefootballclub.com/about">
-    <img
-      src="https://images.mlssoccer.com/image/private/t_editorial_landscape_8_desktop_mobile/f_png/mls-clt-prd/gmea8kmrqzl2u5sff4pt.png"
-      alt="Charlotte FC logo"
-      height="120">
-  </a>
-
-  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-
   <a href="https://www.linkedin.com/company/carnegie-mellon-university-statistics-data-science">
     <img
       src="https://media.licdn.com/dms/image/v2/D560BAQFacqlvLlPJUw/company-logo_200_200/company-logo_200_200/0/1667848317361?e=2147483647&v=beta&t=G2QpQtYPOZQolYyZ2C9G1UdyfilQC6jlW8yf_HWPeto"
       alt="CMSACamp logo"
+      height="120">
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://www.charlottefootballclub.com/about">
+    <img
+      src="https://images.mlssoccer.com/image/private/t_editorial_landscape_8_desktop_mobile/f_png/mls-clt-prd/gmea8kmrqzl2u5sff4pt.png"
+      alt="Charlotte FC logo"
       height="120">
   </a>
 </p>
