@@ -1,5 +1,6 @@
-## 7. XGBoost Model Configuration
-## Defines the XGBoost parameters, number of boosting rounds -> Which one is the best
+# 7. XGBoost Model Configuration
+# Julia Biesiada
+# Defines the XGBoost parameters, number of boosting rounds -> Which one is the best
 
 
 library(tidyverse)
@@ -684,12 +685,12 @@ xg_fit |>
 # 18. SAVE MODEL AND SCORED POSSESSIONS ----------------------------------------
 
 # Honest predictions:
-# training rows use out-of-fold predictions
+# training rows use out-of-fold predictions 
 # test rows use predictions from unseen Fold 1
 # Use calibrated out-of-fold and test probabilities
 train_scored <- train_data |>
   mutate(
-    expected_probability = oof_calibrated
+    expected_probability = oof_calibrated # The predicted probability that the player will choose a lower-threat pass, PTR_binary = 1
   )
 
 test_scored <- test_data |>
@@ -711,6 +712,9 @@ scored_possessions <- bind_rows(
     defense_above_expected =
       PTR_binary - expected_probability
   )
+
+# decision_above_expected = player perspective
+# defense_above_expected  = defending-team perspective
 
 # Variable importance
 importance_table <- xgb.importance(

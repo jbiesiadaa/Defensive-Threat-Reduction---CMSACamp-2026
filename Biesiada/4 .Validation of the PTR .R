@@ -1,11 +1,7 @@
+# 4.Validation of the PTR
 # Julia Biesiada
-# 4.Validation of the PTR 
 # Validation of the PTR (Passing Threat Reduction) metric
 # Each check -> passed/failed
-
-# Most checks use analysis_clean because analysis_model is only a subset with less observations
-# Statistical patterns can change after filtering, so they are rechecked on analysis_model in Check 10
-# Checks 6–7 are exploratory results, not pass/fail validation.
 
 library(tidyverse)
 
@@ -237,18 +233,3 @@ analysis_clean |>
 # These rates depend on role, team style, and field zone, so compare players
 # within position groups. A stronger future version would adjust for context using model residuals
 
-# -----------------------------------------------------------------------------------------------------------
-# TBD WORKING ON IT: Wilcoxon
-# FORMAL TEST: engaged vs unengaged PTR
-# Because PTR is zero-heavy and right-skewed, use a Wilcoxon rank-sum test instead of a normal t-test. With large n, p-values will be very small,
-# so interpret this as a supporting check, not the main evidence
-# Are PTR values generally higher for engaged possessions than unengaged possessions?
-
-wilcox.test(analysis_model$PTR[analysis_model$engaged],
-            analysis_model$PTR[!analysis_model$engaged],
-            alternative = "greater", exact = FALSE)
-
-# APENDIX
-# PTR passes internal consistency checks and aligns with SkillCorner defensive outcome labels, especially Suppression (reduce_danger) and Forced backward 
-# Because these labels come from the same SkillCorner tracking/event data, this is supporting validation, not fully independent proof
-# Future work should compare PTR with video coding or coach-labeled examples

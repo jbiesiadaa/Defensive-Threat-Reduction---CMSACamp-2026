@@ -1,5 +1,6 @@
-# Julia Biesiada
 # 6. Variables Selection
+# Julia Biesiada
+
 
 analysis_clean <- readRDS("ptr_analysis_clean_502games.rds")
 

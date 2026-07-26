@@ -1,3 +1,4 @@
+## 1. Creating Simple Animation from Tracking Data
 ## Julia Biesiada
 ## Creating Visual for tracking players and ball
 

@@ -1,9 +1,7 @@
-
-# TRACKING FEATURES PIPELINE  (v2 -- correct paths + single-game test)
-# ------------------------------------------------------------------------------
-# Run AFTER the PTR script has produced `analysis`
-# (after section 5 "BUILD THE ANALYSIS DATASET", BEFORE the quality filters --
-#  the filters are re-run at the bottom, after the tracking join).
+# 5. Spatial Features 
+# Julia Biesiada
+# ADDING TRACKING FEATURES TO EVENT DATA
+# Run AFTER the PTR script has produced `analysis_dataset`
 
 analysis <- readRDS("analysis_502games_prefilter.rds")
 
@@ -39,9 +37,8 @@ match_file_for <- function(mid) {
             paste0("match_", mid, "_data.json"))
 }
 
-# ==============================================================================
-# 0. HELPERS
-# ==============================================================================
+
+# 0. HELPERS--------------------------------------------------------------------
 
 polygon_area <- function(x, y) {
   ok <- !is.na(x) & !is.na(y)
@@ -81,9 +78,9 @@ defensive_positions <- c(
 
 CORRIDOR_WIDTH <- 2   # passing-lane width (m)
 
-# ==============================================================================
-# 1. SNAPSHOT KEYS -- straight from `analysis`, one row = one possession
-# ==============================================================================
+
+# 1. SNAPSHOT KEYS -- straight from `analysis`, one row = one possession -------
+
 
 snapshot_keys <- analysis |>
   transmute(
@@ -306,9 +303,9 @@ compute_match_features <- function(mid, keys_all) {
     mutate(match_id = as.character(mid), .before = 1)
 }
 
-# ==============================================================================
-# 3. CHECK AVAILABLE MATCH FILES
-# ==============================================================================
+
+# 3. CHECK AVAILABLE MATCH FILES -----------------------------------------------
+
 
 match_ids <- unique(snapshot_keys$match_id)
 
@@ -335,11 +332,11 @@ stopifnot(
     length(available_match_ids) > 0
 )
 
-# ==============================================================================
-# 4. PROCESS ALL AVAILABLE MATCHES
-# ==============================================================================
 
-# CHANGE:
+# 4. PROCESS ALL AVAILABLE MATCHES ---------------------------------------------
+
+
+# CHANGED:
 # Multiple matches are now processed first.
 # The one-game test was moved to the end of the script.
 
@@ -363,9 +360,9 @@ tracking_features |>
 
 glimpse(tracking_features)
 
-# ==============================================================================
-# 5. CREATE GAIN AND LANE VARIABLES
-# ==============================================================================
+
+# 5. CREATE GAIN AND LANE VARIABLES --------------------------------------------
+
 
 tracking_features <- tracking_features |>
   mutate(
@@ -432,9 +429,9 @@ tracking_features <- tracking_features |>
       n_defenders_in_best_option_lane
   )
 
-# ==============================================================================
-# 6. CHECK ONE ROW PER POSSESSION
-# ==============================================================================
+ 
+# 6. CHECK ONE ROW PER POSSESSION ----------------------------------------------
+
 
 duplicate_keys <- tracking_features |>
   count(match_id, event_id) |>
@@ -445,9 +442,9 @@ stopifnot(
     nrow(duplicate_keys) == 0
 )
 
-# ==============================================================================
-# 7. JOIN TRACKING FEATURES INTO ANALYSIS
-# ==============================================================================
+
+# 7. JOIN TRACKING FEATURES INTO ANALYSIS --------------------------------------
+
 
 analysis <- analysis |>
   left_join(
@@ -475,9 +472,9 @@ cat(
   "%\n"
 )
 
-# ==============================================================================
-# 8. ADD PLAYER POSITIONS FROM MATCH LINEUP
-# ==============================================================================
+
+# 8. ADD PLAYER POSITIONS FROM MATCH LINEUP ------------------------------------
+
 
 # CHANGE:
 # Add the registered lineup position for the carrier,
@@ -539,9 +536,9 @@ analysis <- analysis |>
     by = c("match_id", "best_option_player_id")
   )
 
-# ==============================================================================
-# 9. CHECK TRACKING COVERAGE BY MATCH
-# ==============================================================================
+
+# 9. CHECK TRACKING COVERAGE BY MATCH ------------------------------------------
+
 
 analysis |>
   group_by(match_id) |>
@@ -557,9 +554,9 @@ analysis |>
   print(n = Inf)
 
 
-# ==============================================================================
-# 10. APPLY QUALITY FILTERS
-# ==============================================================================
+
+# 10. APPLY QUALITY FILTERS ----------------------------------------------------
+
 
 n_start <- nrow(analysis)
 
@@ -584,9 +581,9 @@ cat(
   "\n"
 )
 
-# ==============================================================================
-# 11. FINAL CHECKS
-# ==============================================================================
+
+# 11. FINAL CHECKS -------------------------------------------------------------
+
 
 cat(
   "Tracking coverage after filtering:",
@@ -647,9 +644,9 @@ analysis_clean |>
   print()
 
 
-# ==============================================================================
-# 12. CHECK MISSING VALUES
-# ==============================================================================
+
+# 12. CHECK MISSING VALUES -----------------------------------------------------
+
 
 na_summary <- analysis_clean |>
   summarise(
@@ -697,9 +694,9 @@ setdiff(
 
 # character(0) means no tracking variables are missing from analysis_clean.
 
-# ==============================================================================
-# 13. SAVE FINAL MULTI-GAME DATASET
-# ==============================================================================
+
+# 13. SAVE FINAL MULTI-GAME DATASET --------------------------------------------
+
 
 saveRDS(
   analysis_clean,
@@ -707,9 +704,9 @@ saveRDS(
 )
 
 
-# ==============================================================================
-# 14. OPTIONAL: TEST ONE GAME
-# ==============================================================================
+
+# 14. OPTIONAL: TEST ONE GAME --------------------------------------------------
+
 
 # CHANGE:
 # The single-game test is now last and is optional.

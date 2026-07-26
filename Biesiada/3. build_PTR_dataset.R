@@ -1,13 +1,11 @@
-# 3. build_PTR_dataset
+# 3. Build_PTR_dataset
+# Julia Biesiada
 # Passing Threat Reduction (PTR): possession-level dataset construction
 # from SkillCorner Dynamic Events (player possessions, passing options,on-ball engagements)
 # data wrangling and feature engineering steps
 # Julia Biesiada Version -> Checking Swayam work and then adding new extensions 
 
 library(tidyverse)
-
-
-# Suppression creates the largest average passing threat reduction, while forced backward actions most often make attackers choose below their best available option.
 
 
 ### NEW IDEA ~ JULIA BIESIADA -------------------------------------------------- 
@@ -22,9 +20,9 @@ library(tidyverse)
 
 
 # Working with single game -> case study for the EDA 
-events    <- read.csv("mls_skillcorner/dynamic_events/match_742721_events.csv")
+ # events    <- read.csv("mls_skillcorner/dynamic_events/match_742721_events.csv")
 
-events <- read.csv("mls_skillcorner/dynamic_events/match_1039803_events.csv")
+# events <- read.csv("mls_skillcorner/dynamic_events/match_1039803_events.csv")
 # ------------------------------------------------------------------------------
 # Working with multiple games
 
@@ -38,7 +36,7 @@ files <- list.files(
 )
 
 # keep only first 10 games
-files_10 <- files[1:10]
+files_10 <- files[1:502]
 
 # read and combine 200 games
 dynamic_10 <- do.call(
@@ -602,7 +600,7 @@ analysis <- possessions |>
 )
 
 # 6. Saving For Future Work Pre Filter ----------------------------------------
-saveRDS(analysis, "analysis_10games_prefilter.rds")
+saveRDS(analysis, "analysis_502games_prefilter.rds")
 
 # 7. QUALITY FILTERS -----------------------------------------------------------
 
@@ -618,7 +616,7 @@ analysis_clean <- analysis |>
   filter(is_player_possession_start_matched %in% TRUE) |> # start features reliable
   filter(!short_possession) |>                            # remove one-touch/very short actions
   filter(!disruption_possession %in% TRUE)                # remove messy/loose-ball actions
-
+  filter(!is.na(organised_defense)) # remove NA for organised defesne
 
 cat("Possessions:", n_start, "->", nrow(analysis_clean),
     "(removed:", n_start - nrow(analysis_clean), ")\n") # How many was removed by filtering

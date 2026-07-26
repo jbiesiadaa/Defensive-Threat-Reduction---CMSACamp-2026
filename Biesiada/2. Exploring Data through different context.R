@@ -1,5 +1,6 @@
-## Julia Biesiada
-## 2. Exploring Data through different context
+# 2. Exploring Data through different context
+# Julia Biesiada
+
 
 library(tidyverse)
 library(ggplot2)
