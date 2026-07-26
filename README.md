@@ -13,7 +13,7 @@
     <img
       src="https://media.licdn.com/dms/image/v2/D560BAQFacqlvLlPJUw/company-logo_200_200/company-logo_200_200/0/1667848317361?e=2147483647&v=beta&t=G2QpQtYPOZQolYyZ2C9G1UdyfilQC6jlW8yf_HWPeto"
       alt="CMU Statistics and Data Science logo"
-      height="100">
+      height="120">
   </a>
 </p>
 
