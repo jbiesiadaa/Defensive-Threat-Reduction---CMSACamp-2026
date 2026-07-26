@@ -15,9 +15,9 @@
       alt="CMU Statistics and Data Science logo"
       height="120">
   </a>
+</p>
 
-  <br><br>
-
+<p align="center">
   <a href="https://www.charlottefootballclub.com/about">
     <img
       src="https://images.mlssoccer.com/image/private/t_editorial_landscape_8_desktop_mobile/f_png/mls-clt-prd/gmea8kmrqzl2u5sff4pt.png"
